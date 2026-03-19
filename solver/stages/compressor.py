@@ -1,35 +1,35 @@
-"""Compressor stage placeholder."""
 import math
 
 from models.atmosphere import Cp, gamma
-from solver.base import Stage, FlowState
+from solver.base import FlowState, Stage
+from solver.cycle import entropy_change, isentropic_temperature
+
 
 class Compressor(Stage):
-    def __init__(self, pressure_ratio, eta_c, gamma=gamma, cp=Cp):
+    def __init__(self, pressure_ratio, eta_c, gamma_value=gamma, cp=Cp):
         super().__init__("Compressor")
         self.rp = pressure_ratio
         self.eta_c = eta_c
-        self.gamma = gamma
+        self.gamma = gamma_value
         self.cp = cp
 
     def process(self, state: FlowState) -> FlowState:
-        T1, P1 = state.T, state.P
+        P2 = state.P * self.rp
+        T2s = isentropic_temperature(state.T, P2, state.P, self.gamma)
+        T2 = state.T + (T2s - state.T) / self.eta_c
 
-        P2 = P1 * self.rp
-
-        # isentropic temperature
-        T2s = T1 * (self.rp)**((self.gamma - 1)/self.gamma)
-
-        # real temperature
-        T2 = T1 + (T2s - T1) / self.eta_c
-
-        entropy = self.cp * math.log(T2 - T1, math.e) - self.cp * T1 * math.log(P2/P1, math.e)
+        P2_ideal = state.P_ideal * self.rp
+        T2_ideal = isentropic_temperature(state.T_ideal, P2_ideal, state.P_ideal, self.gamma)
 
         new_state = state.copy()
         new_state.T = T2
         new_state.P = P2
-        new_state.s += entropy
-        Wc = self.cp * (T2 - T1)
-        new_state.Wc += Wc
+        new_state.s += entropy_change(T2, state.T, P2, state.P, self.cp, state.R)
+        new_state.Wc += self.cp * (T2 - state.T)
 
+        new_state.T_ideal = T2_ideal
+        new_state.P_ideal = P2_ideal
+        new_state.Wc_ideal += self.cp * (T2_ideal - state.T_ideal)
+
+        new_state.update_derived()
         return new_state

@@ -1,4 +1,3 @@
-"""Engine orchestration placeholder."""
 from solver.helpers import kelvinToCelsius
 
 
@@ -7,14 +6,22 @@ class Engine:
         self.stages = stages
 
     def run(self, initial_state):
-      states = [initial_state]
+        initial_state.update_derived()
+        states = [initial_state]
 
-      for i, stage in enumerate(self.stages):
-          new_state = stage.process(states[-1])
-          new_state.stage_name = stage.name
-          new_state.stage_index = i
-          states.append(new_state)
-          print(stage.name,":", "Temperature:", kelvinToCelsius(new_state.T), "°C", "Pressure:", new_state.P, "Pa",stage.name,":", "Compressor Work:", new_state.Wc, "J", "Turbine Work:", new_state.Wt, "J", "Heat Added:", new_state.Qin, "J", "Entropy:", new_state.s, "J/K")
-          print("-" * 50)
+        for index, stage in enumerate(self.stages):
+            new_state = stage.process(states[-1])
+            new_state.stage_name = stage.name
+            new_state.stage_index = index
+            new_state.update_derived()
+            states.append(new_state)
 
-      return states
+            print(
+                f"{stage.name}: "
+                f"actual T={kelvinToCelsius(new_state.T):.2f} degC, "
+                f"actual P={new_state.P:.0f} Pa | "
+                f"ideal T={kelvinToCelsius(new_state.T_ideal):.2f} degC, "
+                f"ideal P={new_state.P_ideal:.0f} Pa"
+            )
+
+        return states
