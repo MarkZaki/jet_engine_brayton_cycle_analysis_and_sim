@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import plotly.io as pio
 import plotly.graph_objects as go
 
 from visualization.diagrams import PV_diagram, TP_diagram, TS_diagram, performance_diagram
@@ -27,6 +28,17 @@ def _finalize_figure(fig, filename, show, persist):
     elif show:
         fig.show()
     return fig
+
+
+def figure_to_html_bytes(fig):
+    return fig.to_html(include_plotlyjs=True, full_html=True).encode("utf-8")
+
+
+def figure_to_png_bytes(fig):
+    try:
+        return pio.to_image(fig, format="png", width=1400, height=900, scale=2)
+    except Exception:
+        return None
 
 
 def _apply_layout(fig, title, x_title, y_title):
@@ -60,7 +72,9 @@ def _add_station_markers(fig, stations, x_key, y_key, x_fmt, y_fmt, branch, colo
         (
             f"<b>{station['label']}</b><br>"
             f"{x_key}: {x_fmt(station[x_key])}<br>"
-            f"{y_key}: {y_fmt(station[y_key])}"
+            f"{y_key}: {y_fmt(station[y_key])}<br>"
+            f"Tt: {station.get('Tt', station.get('T', 0.0)):.1f} K<br>"
+            f"Pt: {station.get('Pt', station.get('P', 0.0)) / 1000.0:.1f} kPa"
         )
         for station in stations
     ]
@@ -270,6 +284,45 @@ def plot_performance(states, show=True, persist=True):
     _apply_layout(fig, "Net Specific Work by Stage", "Stage", "Specific Work (J/kg)")
     fig.update_layout(barmode="group")
     return _finalize_figure(fig, "performance.html", show, persist)
+
+
+def plot_operating_map(surface_df, metric="thrust_N", show=True, persist=True):
+    pivot = surface_df.pivot(index="altitude_m", columns="flight_speed_mps", values=metric)
+    metric_label = {
+        "thrust_N": "Thrust (N)",
+        "overall_efficiency": "Overall Efficiency",
+        "specific_thrust_N_per_kg_s": "Specific Thrust (N/(kg/s))",
+    }.get(metric, metric)
+    colorscale = "Turbo" if "efficiency" not in metric else "Viridis"
+
+    fig = go.Figure(
+        data=
+        [
+            go.Heatmap(
+                x=pivot.columns.tolist(),
+                y=pivot.index.tolist(),
+                z=pivot.values,
+                colorscale=colorscale,
+                colorbar={"title": metric_label},
+                hovertemplate=(
+                    "Speed: %{x:.0f} m/s<br>"
+                    "Altitude: %{y:.0f} m<br>"
+                    f"{metric_label}: %{{z:.3f}}<extra></extra>"
+                ),
+            )
+        ]
+    )
+    fig.update_layout(
+        template="plotly_white",
+        title={"text": f"Operating Map: {metric_label}", "x": 0.04},
+        paper_bgcolor=PLOT_THEME["paper_bgcolor"],
+        plot_bgcolor=PLOT_THEME["plot_bgcolor"],
+        font={"family": "Arial", "color": PLOT_THEME["font_color"], "size": 13},
+        margin={"l": 72, "r": 36, "t": 72, "b": 62},
+    )
+    fig.update_xaxes(title="Flight Speed (m/s)", gridcolor=PLOT_THEME["gridcolor"])
+    fig.update_yaxes(title="Altitude (m)", gridcolor=PLOT_THEME["gridcolor"])
+    return _finalize_figure(fig, "operating_map.html", show, persist)
 
 
 def plot_engine_flow(states, ideal=False, show=True, persist=True):

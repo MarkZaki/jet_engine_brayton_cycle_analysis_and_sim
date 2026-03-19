@@ -5,17 +5,15 @@ import numpy as np
 import plotly.figure_factory as ff
 import plotly.graph_objects as go
 
-from models.atmosphere import R
-
 
 SECTION_LAYOUT = {
-    "Inlet": {"length": 1.25, "h_in": 0.85, "h_out": 1.15, "kind": "diffuser"},
-    "Compressor": {"length": 1.45, "h_in": 1.15, "h_out": 0.95, "kind": "compressor"},
-    "Combustor": {"length": 1.35, "h_in": 0.95, "h_out": 1.35, "kind": "combustor"},
-    "Turbine": {"length": 1.25, "h_in": 1.35, "h_out": 1.05, "kind": "turbine"},
-    "Nozzle": {"length": 1.55, "h_in": 1.05, "h_out": 0.60, "kind": "nozzle"},
+    "Inlet": {"length": 1.25, "kind": "diffuser"},
+    "Compressor": {"length": 1.45, "kind": "compressor"},
+    "Combustor": {"length": 1.35, "kind": "combustor"},
+    "Turbine": {"length": 1.25, "kind": "turbine"},
+    "Nozzle": {"length": 1.55, "kind": "nozzle"},
 }
-DEFAULT_SECTION = {"length": 1.20, "h_in": 1.00, "h_out": 1.00, "kind": "duct"}
+DEFAULT_SECTION = {"length": 1.20, "kind": "duct"}
 HEAT_COLORSCALE = [
     [0.00, "#163A70"],
     [0.20, "#1F78B4"],
@@ -28,8 +26,6 @@ GRID_Y = 180
 FIELD_X = 24
 FIELD_Y = 9
 OUTPUT_DIR = Path("outputs")
-
-
 def _state_value(state, field, ideal=False):
     if ideal:
         return getattr(state, f"{field}_ideal")
@@ -40,9 +36,14 @@ def _station_payload(state, ideal=False):
     return {
         "label": state.stage_name or "Freestream",
         "T": _state_value(state, "T", ideal),
+        "Tt": _state_value(state, "Tt", ideal),
         "P": _state_value(state, "P", ideal),
+        "Pt": _state_value(state, "Pt", ideal),
         "V": _state_value(state, "V", ideal),
+        "M": _state_value(state, "M", ideal),
+        "area": max(_state_value(state, "area", ideal), _state_value(state, "exit_area", ideal), 1e-6),
         "m_dot": state.m_dot,
+        "R": state.R,
     }
 
 
@@ -50,18 +51,25 @@ def _section_spec(stage_name):
     return SECTION_LAYOUT.get(stage_name, DEFAULT_SECTION)
 
 
+def _height_from_area(area, reference_area):
+    normalized = max(area / max(reference_area, 1e-9), 0.05)
+    return 0.32 + 0.98 * math.sqrt(normalized)
+
+
 def _build_sections(states, ideal=False):
     if hasattr(states, "states"):
         states = states.states
 
+    payloads = [_station_payload(state, ideal) for state in states]
+    reference_area = max(payload["area"] for payload in payloads)
     sections = []
     x_cursor = 0.0
 
     for index in range(1, len(states)):
         stage_name = states[index].stage_name or f"Stage {index}"
         spec = _section_spec(stage_name)
-        start = _station_payload(states[index - 1], ideal)
-        end = _station_payload(states[index], ideal)
+        start = payloads[index - 1]
+        end = payloads[index]
 
         sections.append(
             {
@@ -69,8 +77,8 @@ def _build_sections(states, ideal=False):
                 "kind": spec["kind"],
                 "x0": x_cursor,
                 "x1": x_cursor + spec["length"],
-                "h0": spec["h_in"],
-                "h1": spec["h_out"],
+                "h0": _height_from_area(start["area"], reference_area),
+                "h1": _height_from_area(end["area"], reference_area),
                 "start": start,
                 "end": end,
             }
@@ -91,28 +99,24 @@ def _station_locations(sections):
     return positions
 
 
-def _density(temperature, pressure):
-    return pressure / (R * temperature)
+def _density(temperature, pressure, gas_constant):
+    return pressure / (gas_constant * temperature)
 
 
 def _display_velocities(stations):
-    proxies = []
-    known_scale_factors = []
+    velocities = []
 
     for station in stations:
-        area_proxy = max(0.20, 2.0 * station["h"])
-        rho = _density(station["station"]["T"], station["station"]["P"])
-        proxy_velocity = station["station"]["m_dot"] / (rho * area_proxy)
-        proxies.append(proxy_velocity)
+        velocity = station["station"]["V"]
+        if velocity > 1.0:
+            velocities.append(velocity)
+            continue
 
-        if station["station"]["V"] > 1.0:
-            known_scale_factors.append(station["station"]["V"] / proxy_velocity)
+        rho = _density(station["station"]["T"], station["station"]["P"], station["station"]["R"])
+        area = max(station["station"]["area"], 1e-6)
+        velocities.append(station["station"]["m_dot"] / max(rho * area, 1e-9))
 
-    scale = sum(known_scale_factors) / len(known_scale_factors) if known_scale_factors else 1.0
-    output = []
-    for proxy_velocity, station in zip(proxies, stations):
-        output.append(station["station"]["V"] if station["station"]["V"] > 1.0 else scale * proxy_velocity)
-    return output
+    return velocities
 
 
 def _wall_shape(section, x_value):
@@ -141,6 +145,7 @@ def _temperature_map(sections):
         wall = _wall_shape(section, x_value)
         centerline_temperature = (1.0 - ratio) * section["start"]["T"] + ratio * section["end"]["T"]
         centerline_pressure = (1.0 - ratio) * section["start"]["P"] + ratio * section["end"]["P"]
+        centerline_total_pressure = (1.0 - ratio) * section["start"]["Pt"] + ratio * section["end"]["Pt"]
 
         for row, y_value in enumerate(y_values):
             if abs(y_value) <= wall:
@@ -152,6 +157,7 @@ def _temperature_map(sections):
                     f"<b>{section['name']}</b><br>"
                     f"Temperature: {temperature:.1f} K<br>"
                     f"Approx. pressure: {centerline_pressure / 1000.0:.1f} kPa<br>"
+                    f"Approx. total pressure: {centerline_total_pressure / 1000.0:.1f} kPa<br>"
                     f"Relative height: {y_value:.2f}"
                 )
 
@@ -276,7 +282,7 @@ def _pattern_traces(sections):
     return traces
 
 
-def _annotations(sections, stations, velocities, ideal=False):
+def _annotations(sections, velocities, ideal=False):
     annotations = []
 
     for index, section in enumerate(sections):
@@ -298,9 +304,10 @@ def _annotations(sections, stations, velocities, ideal=False):
                 "text": (
                     f"<b>{section['name']}</b><br>"
                     f"{branch} outlet<br>"
-                    f"T = {outlet['T']:.0f} K<br>"
-                    f"P = {outlet['P'] / 1000:.0f} kPa<br>"
-                    f"V ≈ {local_velocity:.0f} m/s"
+                    f"T = {outlet['T']:.0f} K, Tt = {outlet['Tt']:.0f} K<br>"
+                    f"P = {outlet['P'] / 1000:.0f} kPa, Pt = {outlet['Pt'] / 1000:.0f} kPa<br>"
+                    f"V ~ {local_velocity:.0f} m/s, M = {outlet['M']:.2f}<br>"
+                    f"A = {outlet['area']:.3f} m^2"
                 ),
             }
         )
@@ -377,7 +384,7 @@ def plot_engine_flow(states, ideal=False, show=True, persist=True):
         },
         margin={"l": 40, "r": 40, "t": 86, "b": 46},
         font={"family": "Arial", "size": 13, "color": "#102A43"},
-        annotations=_annotations(sections, stations, velocities, ideal=ideal),
+        annotations=_annotations(sections, velocities, ideal=ideal),
     )
     fig.update_xaxes(
         title="Engine Axis",

@@ -38,7 +38,13 @@ def summarize_result(result, V0):
         "propulsive_efficiency": propulsive_efficiency(final_state, V0),
         "overall_efficiency": overall_efficiency(final_state, V0),
         "exit_velocity_mps": final_state.V,
+        "exit_mach": final_state.M,
+        "exit_static_temperature_K": final_state.T,
+        "exit_total_temperature_K": final_state.Tt,
+        "exit_static_pressure_Pa": final_state.P,
+        "exit_total_pressure_Pa": final_state.Pt,
         "exit_area_m2": final_state.exit_area,
+        "throat_area_m2": final_state.throat_area,
         "pressure_thrust_N": final_state.pressure_thrust,
         "nozzle_choked": final_state.nozzle_choked,
     }

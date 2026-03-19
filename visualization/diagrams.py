@@ -15,7 +15,9 @@ def _station_values(state, ideal=False):
         return {
             "label": state.stage_name or "Freestream",
             "T": state.T_ideal,
+            "Tt": state.Tt_ideal,
             "P": state.P_ideal,
+            "Pt": state.Pt_ideal,
             "s": state.s_ideal,
             "v": state.v_ideal,
             "cp": state.cp,
@@ -25,7 +27,9 @@ def _station_values(state, ideal=False):
     return {
         "label": state.stage_name or "Freestream",
         "T": state.T,
+        "Tt": state.Tt,
         "P": state.P,
+        "Pt": state.Pt,
         "s": state.s,
         "v": state.v,
         "cp": state.cp,

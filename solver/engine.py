@@ -53,17 +53,20 @@ def build_engine(config, gas):
             Compressor(
                 pressure_ratio=config["compressor_pressure_ratio"],
                 eta_c=config["compressor_efficiency"],
+                exit_velocity=config["compressor_exit_velocity"],
                 gas=gas,
             ),
             Combustor(
                 T3=config["turbine_inlet_temperature"],
                 pressure_loss=config["combustor_pressure_loss"],
+                exit_velocity=config["combustor_exit_velocity"],
                 gas=gas,
                 burner_efficiency=config["combustor_efficiency"],
             ),
             Turbine(
                 eta_t=config["turbine_efficiency"],
                 eta_mech=config["mechanical_efficiency"],
+                exit_velocity=config["turbine_exit_velocity"],
                 gas=gas,
             ),
             Nozzle(
@@ -125,5 +128,34 @@ def sweep_compressor_pressure_ratio(base_config, pressure_ratios):
                 "nozzle_choked": summary["nozzle_choked"],
             }
         )
+
+    return pd.DataFrame(rows)
+
+
+def sweep_flight_envelope(base_config, altitudes_m, flight_speeds_mps):
+    rows = []
+
+    for altitude_m in altitudes_m:
+        atmosphere = isa_atmosphere(float(altitude_m))
+        for flight_speed in flight_speeds_mps:
+            case_config = deepcopy(base_config)
+            case_config["altitude_m"] = float(altitude_m)
+            case_config["ambient_temperature"] = atmosphere.temperature
+            case_config["ambient_pressure"] = atmosphere.pressure
+            case_config["flight_speed"] = float(flight_speed)
+            case_config["verbose"] = False
+            result = run_engine_case(case_config)
+            summary = summarize_result(result, V0=case_config["flight_speed"])
+            rows.append(
+                {
+                    "altitude_m": float(altitude_m),
+                    "flight_speed_mps": float(flight_speed),
+                    "thrust_N": summary["thrust_N"],
+                    "specific_thrust_N_per_kg_s": summary["specific_thrust_N_per_kg_s"],
+                    "overall_efficiency": summary["overall_efficiency"],
+                    "jet_power_efficiency": summary["jet_power_efficiency"],
+                    "nozzle_choked": summary["nozzle_choked"],
+                }
+            )
 
     return pd.DataFrame(rows)

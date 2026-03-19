@@ -1,18 +1,33 @@
+import json
 from pathlib import Path
 import sys
+
+import plotly.graph_objects as go
+import streamlit as st
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import plotly.graph_objects as go
-import streamlit as st
-
 from configs.default import get_default_config
 from models.atmosphere import isa_atmosphere
 from performance.metrics import summarize_result
-from solver.engine import run_engine_case, sweep_compressor_pressure_ratio
-from visualization.plots import plot_PV, plot_TP, plot_TS, plot_engine_flow, plot_performance
+from performance.reporting import build_html_report
+from solver.engine import (
+    run_engine_case,
+    sweep_compressor_pressure_ratio,
+    sweep_flight_envelope,
+)
+from visualization.plots import (
+    figure_to_html_bytes,
+    figure_to_png_bytes,
+    plot_PV,
+    plot_TP,
+    plot_TS,
+    plot_engine_flow,
+    plot_operating_map,
+    plot_performance,
+)
 
 
 def _build_sidebar_config():
@@ -40,7 +55,6 @@ def _build_sidebar_config():
             1.0,
             float(defaults["pressure_recovery"]),
             step=0.01,
-            key="pressure_recovery",
         )
         config["compressor_pressure_ratio"] = st.slider(
             "Compressor Pressure Ratio",
@@ -48,7 +62,6 @@ def _build_sidebar_config():
             30.0,
             float(defaults["compressor_pressure_ratio"]),
             step=0.5,
-            key="compressor_pressure_ratio",
         )
         config["compressor_efficiency"] = st.slider(
             "Compressor Efficiency",
@@ -56,7 +69,6 @@ def _build_sidebar_config():
             0.95,
             float(defaults["compressor_efficiency"]),
             step=0.01,
-            key="compressor_efficiency",
         )
         config["turbine_inlet_temperature"] = st.slider(
             "Turbine Inlet Temperature (K)",
@@ -64,7 +76,6 @@ def _build_sidebar_config():
             2200.0,
             float(defaults["turbine_inlet_temperature"]),
             step=25.0,
-            key="turbine_inlet_temperature",
         )
         config["combustor_pressure_loss"] = st.slider(
             "Combustor Pressure Loss",
@@ -72,7 +83,6 @@ def _build_sidebar_config():
             0.12,
             float(defaults["combustor_pressure_loss"]),
             step=0.005,
-            key="combustor_pressure_loss",
         )
         config["combustor_efficiency"] = st.slider(
             "Combustor Efficiency",
@@ -80,7 +90,6 @@ def _build_sidebar_config():
             1.0,
             float(defaults["combustor_efficiency"]),
             step=0.005,
-            key="combustor_efficiency",
         )
         config["turbine_efficiency"] = st.slider(
             "Turbine Efficiency",
@@ -88,7 +97,6 @@ def _build_sidebar_config():
             0.98,
             float(defaults["turbine_efficiency"]),
             step=0.01,
-            key="turbine_efficiency",
         )
         config["mechanical_efficiency"] = st.slider(
             "Mechanical Efficiency",
@@ -96,7 +104,6 @@ def _build_sidebar_config():
             1.0,
             float(defaults["mechanical_efficiency"]),
             step=0.01,
-            key="mechanical_efficiency",
         )
         config["nozzle_efficiency"] = st.slider(
             "Nozzle Efficiency",
@@ -104,7 +111,36 @@ def _build_sidebar_config():
             1.0,
             float(defaults["nozzle_efficiency"]),
             step=0.01,
-            key="nozzle_efficiency",
+        )
+
+    with st.sidebar.expander("Section Velocities", expanded=False):
+        config["diffuser_exit_velocity"] = st.slider(
+            "Diffuser Exit Velocity (m/s)",
+            20.0,
+            220.0,
+            float(defaults["diffuser_exit_velocity"]),
+            step=5.0,
+        )
+        config["compressor_exit_velocity"] = st.slider(
+            "Compressor Exit Velocity (m/s)",
+            40.0,
+            260.0,
+            float(defaults["compressor_exit_velocity"]),
+            step=5.0,
+        )
+        config["combustor_exit_velocity"] = st.slider(
+            "Combustor Exit Velocity (m/s)",
+            20.0,
+            180.0,
+            float(defaults["combustor_exit_velocity"]),
+            step=5.0,
+        )
+        config["turbine_exit_velocity"] = st.slider(
+            "Turbine Exit Velocity (m/s)",
+            40.0,
+            280.0,
+            float(defaults["turbine_exit_velocity"]),
+            step=5.0,
         )
 
     with st.sidebar.expander("Gas Model", expanded=False):
@@ -166,6 +202,107 @@ def _sweep_figure(sweep_df):
     return fig
 
 
+def _station_column_view(station_df, mode):
+    if mode == "Actual Focus":
+        return station_df[
+            [
+                "stage_name",
+                "stage_index",
+                "actual_static_temperature_K",
+                "actual_total_temperature_K",
+                "actual_static_pressure_kPa",
+                "actual_total_pressure_kPa",
+                "actual_velocity_mps",
+                "actual_mach",
+                "actual_area_m2",
+                "actual_entropy_J_per_kgK",
+                "fuel_air_ratio",
+                "nozzle_choked",
+            ]
+        ]
+    if mode == "Theoretical Focus":
+        return station_df[
+            [
+                "stage_name",
+                "stage_index",
+                "ideal_static_temperature_K",
+                "ideal_total_temperature_K",
+                "ideal_static_pressure_kPa",
+                "ideal_total_pressure_kPa",
+                "ideal_velocity_mps",
+                "ideal_mach",
+                "ideal_area_m2",
+                "ideal_entropy_J_per_kgK",
+                "fuel_air_ratio",
+                "nozzle_choked",
+            ]
+        ]
+    return station_df
+
+
+def _download_buttons(figures, station_df, component_df, summary):
+    report_html = build_html_report(
+        summary,
+        {
+            "station_csv": Path("station_summary.csv"),
+            "component_csv": Path("component_summary.csv"),
+            "summary_json": Path("summary_metrics.json"),
+        },
+    ).encode("utf-8")
+
+    left, right = st.columns(2)
+    with left:
+        st.download_button(
+            "Download Station CSV",
+            station_df.to_csv(index=False).encode("utf-8"),
+            file_name="station_summary.csv",
+            mime="text/csv",
+            width="stretch",
+        )
+        st.download_button(
+            "Download Component CSV",
+            component_df.to_csv(index=False).encode("utf-8"),
+            file_name="component_summary.csv",
+            mime="text/csv",
+            width="stretch",
+        )
+        st.download_button(
+            "Download Summary JSON",
+            json.dumps(summary, indent=2).encode("utf-8"),
+            file_name="summary_metrics.json",
+            mime="application/json",
+            width="stretch",
+        )
+    with right:
+        st.download_button(
+            "Download HTML Report",
+            report_html,
+            file_name="report.html",
+            mime="text/html",
+            width="stretch",
+        )
+        figure_name = st.selectbox("Figure export", list(figures.keys()))
+        selected_figure = figures[figure_name]
+        st.download_button(
+            "Download Figure HTML",
+            figure_to_html_bytes(selected_figure),
+            file_name=f"{figure_name.lower().replace(' ', '_')}.html",
+            mime="text/html",
+            width="stretch",
+        )
+        png_bytes = figure_to_png_bytes(selected_figure)
+        if png_bytes is None:
+            st.info("PNG export needs Plotly's Kaleido backend. HTML export is available now.")
+        else:
+            st.download_button(
+                "Download Figure PNG",
+                png_bytes,
+                file_name=f"{figure_name.lower().replace(' ', '_')}.png",
+                mime="image/png",
+                width="stretch",
+            )
+
+
 def main():
     st.set_page_config(page_title="Jet Engine Brayton Simulator", layout="wide")
     st.markdown(
@@ -183,7 +320,7 @@ def main():
         </style>
         <div class="hero">
             <h2 style="margin:0;">Jet Engine Brayton Cycle Analysis</h2>
-            <p>Interactive 1D cycle model with actual vs theoretical plots, station records, and a thermal-flow schematic.</p>
+            <p>Interactive 1D cycle model with explicit static vs total station data, actual vs theoretical plots, and exportable reports.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -193,6 +330,16 @@ def main():
     result = run_engine_case(config)
     summary = summarize_result(result, V0=config["flight_speed"])
     station_df = result.to_dataframe()
+    component_df = result.to_component_dataframe()
+
+    figures = {
+        "T-s Diagram": plot_TS(result, show=False, persist=False),
+        "P-v Diagram": plot_PV(result, show=False, persist=False),
+        "T-P Diagram": plot_TP(result, show=False, persist=False),
+        "Performance": plot_performance(result, show=False, persist=False),
+        "Engine Flow Actual": plot_engine_flow(result, ideal=False, show=False, persist=False),
+        "Engine Flow Theoretical": plot_engine_flow(result, ideal=True, show=False, persist=False),
+    }
 
     metrics = st.columns(6)
     with metrics[0]:
@@ -202,28 +349,30 @@ def main():
     with metrics[2]:
         _metric_card("Fuel-Air Ratio", f"{summary['fuel_air_ratio']:.5f}")
     with metrics[3]:
-        _metric_card("BWR", f"{summary['bwr']:.3f}")
+        _metric_card("Exit Mach", f"{summary['exit_mach']:.2f}")
     with metrics[4]:
         _metric_card("Overall Eff.", f"{summary['overall_efficiency']:.3f}")
     with metrics[5]:
         _metric_card("Nozzle Choked", "Yes" if summary["nozzle_choked"] else "No")
 
-    tabs = st.tabs(["Cycle Plots", "Engine View", "Parametric Sweep", "Stations"])
+    st.caption(
+        "Static quantities are local flow conditions. Total quantities are stagnation conditions obtained by bringing the flow to rest isentropically at that station."
+    )
+
+    tabs = st.tabs(["Cycle Plots", "Engine View", "Parametric Sweep", "Operating Map", "Stations", "Exports"])
 
     with tabs[0]:
         left, right = st.columns(2)
-        left.plotly_chart(plot_TS(result, show=False, persist=False), width="stretch")
-        right.plotly_chart(plot_PV(result, show=False, persist=False), width="stretch")
+        left.plotly_chart(figures["T-s Diagram"], width="stretch")
+        right.plotly_chart(figures["P-v Diagram"], width="stretch")
         left, right = st.columns(2)
-        left.plotly_chart(plot_TP(result, show=False, persist=False), width="stretch")
-        right.plotly_chart(plot_performance(result, show=False, persist=False), width="stretch")
+        left.plotly_chart(figures["T-P Diagram"], width="stretch")
+        right.plotly_chart(figures["Performance"], width="stretch")
 
     with tabs[1]:
         branch = st.radio("Schematic branch", ["Actual", "Theoretical"], horizontal=True)
-        st.plotly_chart(
-            plot_engine_flow(result, ideal=(branch == "Theoretical"), show=False, persist=False),
-            width="stretch",
-        )
+        figure_key = "Engine Flow Theoretical" if branch == "Theoretical" else "Engine Flow Actual"
+        st.plotly_chart(figures[figure_key], width="stretch")
 
     with tabs[2]:
         sweep_cols = st.columns(3)
@@ -239,7 +388,48 @@ def main():
             st.dataframe(sweep_df.round(4), width="stretch", hide_index=True)
 
     with tabs[3]:
-        st.dataframe(station_df.round(4), width="stretch", hide_index=True)
+        controls = st.columns(6)
+        altitude_min = controls[0].slider("Alt min (m)", 0, 12000, 0, step=500)
+        altitude_max = controls[1].slider("Alt max (m)", 2000, 15000, 10000, step=500)
+        altitude_points = controls[2].slider("Alt points", 3, 8, 5)
+        speed_min = controls[3].slider("Speed min (m/s)", 0, 250, 50, step=10)
+        speed_max = controls[4].slider("Speed max (m/s)", 100, 450, 300, step=10)
+        speed_points = controls[5].slider("Speed points", 3, 8, 5)
+        metric = st.selectbox(
+            "Map metric",
+            ["thrust_N", "overall_efficiency", "specific_thrust_N_per_kg_s"],
+            format_func=lambda key: {
+                "thrust_N": "Thrust",
+                "overall_efficiency": "Overall Efficiency",
+                "specific_thrust_N_per_kg_s": "Specific Thrust",
+            }[key],
+        )
+        if altitude_min >= altitude_max or speed_min >= speed_max:
+            st.warning("Minimum values must be smaller than maximum values.")
+        else:
+            altitudes = [altitude_min + i * (altitude_max - altitude_min) / (altitude_points - 1) for i in range(altitude_points)]
+            speeds = [speed_min + i * (speed_max - speed_min) / (speed_points - 1) for i in range(speed_points)]
+            envelope_df = sweep_flight_envelope(config, altitudes, speeds)
+            operating_map = plot_operating_map(envelope_df, metric=metric, show=False, persist=False)
+            st.plotly_chart(operating_map, width="stretch")
+            st.dataframe(envelope_df.round(4), width="stretch", hide_index=True)
+            st.download_button(
+                "Download Envelope CSV",
+                envelope_df.to_csv(index=False).encode("utf-8"),
+                file_name="operating_envelope.csv",
+                mime="text/csv",
+                width="stretch",
+            )
+
+    with tabs[4]:
+        table_mode = st.radio("Table view", ["Combined", "Actual Focus", "Theoretical Focus", "Component Deltas"], horizontal=True)
+        if table_mode == "Component Deltas":
+            st.dataframe(component_df.round(4), width="stretch", hide_index=True)
+        else:
+            st.dataframe(_station_column_view(station_df.round(4), table_mode), width="stretch", hide_index=True)
+
+    with tabs[5]:
+        _download_buttons(figures, station_df.round(6), component_df.round(6), summary)
 
 
 if __name__ == "__main__":

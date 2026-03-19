@@ -3,10 +3,11 @@
 Student-focused Brayton-cycle jet engine simulator with:
 
 - a reusable gas model
+- explicit static and total station tracking
 - actual vs theoretical cycle tracking
 - inlet, compressor, combustor, turbine, and nozzle stages
 - nozzle choking logic
-- Plotly cycle plots and thermal-flow schematic exports
+- Plotly cycle plots, engine schematic, and operating-map exports
 - a Streamlit interface for interactive exploration
 
 Repository: https://github.com/MarkZaki/jet_engine_brayton_cycle_analysis_and_sim
@@ -67,12 +68,14 @@ project_root/
 - reusable `IdealGas` model in `models/gas.py`
 - ISA-based atmosphere helper in `models/atmosphere.py`
 - structured engine run result with station table export
+- explicit static vs total station properties and component delta tables
 - combustor fuel-air ratio calculation from target turbine inlet temperature
 - turbine work balance linked to compressor demand and fuel addition
-- nozzle choking detection with pressure-thrust estimate
+- nozzle choking detection with pressure-thrust and throat-area estimates
 - actual and theoretical `P-v`, `T-s`, `T-P`, and work plots
-- engine thermal-flow schematic with Plotly
-- Streamlit dashboard with controls, metrics, plots, station table, and a pressure-ratio sweep
+- geometry-linked engine thermal-flow schematic with Plotly
+- Streamlit dashboard with controls, metrics, plots, station tables, component deltas, export tools, a pressure-ratio sweep, and a flight-envelope operating map
+- CSV, JSON, HTML, and PNG export support
 
 ## Running The Project
 
@@ -89,6 +92,7 @@ python main.py
 ```
 
 Script mode writes Plotly HTML files to `outputs/`.
+It also writes station/component CSV tables, summary metrics, and an HTML report.
 
 ## Validation
 
@@ -102,6 +106,7 @@ python -m unittest discover -s tests -v
 
 - The solver is a 1D thermodynamic model, not CFD.
 - The thermal-flow schematic is an engineering visualization built from station data and interpolation.
+- Component geometry in the schematic is scaled from solved station areas, not arbitrary fixed heights.
 - The ideal cycle is closed in the diagram layer for textbook comparison, while the actual engine path remains open.
 
 ## License

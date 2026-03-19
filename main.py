@@ -1,7 +1,15 @@
 from configs.default import get_default_config
 from performance.metrics import summarize_result
-from solver.engine import run_engine_case
-from visualization.plots import plot_PV, plot_TP, plot_TS, plot_engine_flow, plot_performance
+from performance.reporting import export_result_tables, write_html_report
+from solver.engine import run_engine_case, sweep_flight_envelope
+from visualization.plots import (
+    plot_PV,
+    plot_TP,
+    plot_TS,
+    plot_engine_flow,
+    plot_operating_map,
+    plot_performance,
+)
 
 
 def main():
@@ -17,12 +25,23 @@ def main():
     print(f"Jet power efficiency: {summary['jet_power_efficiency']:.4f}")
     print(f"BWR: {summary['bwr']:.4f}")
     print(f"Nozzle choked: {summary['nozzle_choked']}")
+    print(f"Exit Mach: {summary['exit_mach']:.3f}")
+    print(f"Exit area: {summary['exit_area_m2']:.4f} m^2")
+    print(f"Throat area: {summary['throat_area_m2']:.4f} m^2")
 
     plot_PV(result, show=False, persist=True)
     plot_TS(result, show=False, persist=True)
     plot_TP(result, show=False, persist=True)
     plot_performance(result, show=False, persist=True)
     plot_engine_flow(result, show=False, persist=True)
+    plot_engine_flow(result, ideal=True, show=False, persist=True)
+
+    envelope_df = sweep_flight_envelope(config, [0.0, 4000.0, 8000.0, 12000.0], [50.0, 125.0, 200.0, 275.0, 350.0])
+    plot_operating_map(envelope_df, metric="thrust_N", show=False, persist=True)
+
+    exports = export_result_tables(result, summary, output_dir="outputs")
+    report_path = write_html_report(summary, exports, output_dir="outputs")
+    print(f"Saved report: {report_path.resolve()}")
 
 
 if __name__ == "__main__":
