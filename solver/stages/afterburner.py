@@ -1,0 +1,1 @@
+"""Afterburner stage placeholder."""

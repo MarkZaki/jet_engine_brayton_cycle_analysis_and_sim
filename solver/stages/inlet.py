@@ -1,0 +1,1 @@
+"""Inlet stage placeholder."""

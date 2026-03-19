@@ -1,0 +1,1 @@
+"""Combustor stage placeholder."""

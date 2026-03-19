@@ -1,54 +1,73 @@
 # Jet Engine Brayton Cycle Analysis and Simulation
 
-Simple student-project scaffold for a Brayton-cycle jet engine simulator.
+Student-project scaffold for a Brayton-cycle jet engine simulator.
 
 Repository: https://github.com/MarkZaki/jet_engine_brayton_cycle_analysis_and_sim
 
 ## Current Status
 
-The project is still in scaffold stage.
-The files exist, but the simulator logic and UI are not implemented yet.
+This repository currently contains only the project layout and placeholder modules.
+The physics, UI, and visualization logic still need to be implemented.
 
-## Simple Structure
+## Folder Structure
 
 ```text
-jet_engine_brayton_cycle_analysis_and_sim/
-|-- .github/
-|   `-- workflows/
-|-- .streamlit/
-|   `-- config.toml
-|-- engine_sim/
+project_root/
+|
+|-- solver/
 |   |-- __init__.py
-|   |-- atmosphere.py
-|   |-- brayton_cycle.py
+|   |-- base.py
 |   |-- engine.py
-|   |-- performance.py
-|   `-- visualization.py
-|-- .gitattributes
-|-- .gitignore
-|-- app.py
-|-- LICENSE
-|-- README.md
+|   |-- cycle.py
+|   `-- stages/
+|       |-- compressor.py
+|       |-- combustor.py
+|       |-- turbine.py
+|       |-- nozzle.py
+|       |-- inlet.py
+|       `-- afterburner.py
+|
+|-- models/
+|   |-- atmosphere.py
+|   `-- gas.py
+|
+|-- performance/
+|   |-- thrust.py
+|   |-- efficiency.py
+|   `-- metrics.py
+|
+|-- visualization/
+|   |-- plots.py
+|   |-- diagrams.py
+|   `-- flow.py
+|
+|-- ui/
+|   `-- app.py
+|
+|-- configs/
+|   `-- default.py
+|
+|-- main.py
 `-- requirements.txt
 ```
 
-## What Each File Will Do
+## Module Responsibilities
 
-- `app.py`: Streamlit app entrypoint
-- `engine_sim/atmosphere.py`: ambient and flight-condition helpers
-- `engine_sim/brayton_cycle.py`: cycle equations
-- `engine_sim/engine.py`: engine-level calculation flow
-- `engine_sim/performance.py`: thrust and efficiency metrics
-- `engine_sim/visualization.py`: plots and diagrams
+- `solver/`: thermodynamics and engine-stage execution flow
+- `models/`: atmosphere and gas-property helpers
+- `performance/`: thrust, efficiencies, and derived metrics
+- `visualization/`: scientific plots, schematics, and flow visuals
+- `ui/`: Streamlit interface
+- `configs/`: default inputs and presets
 
 ## UI Direction
 
-The target look is still modern but scientific:
+The intended look remains modern but scientific:
 
-- clean light background
-- blue-gray engineering palette
-- warm accents for temperature and combustion
-- clear units, labels, and readable plots
+- light engineering-style layout
+- restrained blue-gray palette
+- warm thermal accents for hot sections
+- clear units and plot labels
 
 ## Setup
 
@@ -56,7 +75,7 @@ The target look is still modern but scientific:
 git clone https://github.com/MarkZaki/jet_engine_brayton_cycle_analysis_and_sim.git
 cd jet_engine_brayton_cycle_analysis_and_sim
 pip install -r requirements.txt
-streamlit run app.py
+streamlit run ui/app.py
 ```
 
 ## License

@@ -1,0 +1,1 @@
+"""Nozzle stage placeholder."""
