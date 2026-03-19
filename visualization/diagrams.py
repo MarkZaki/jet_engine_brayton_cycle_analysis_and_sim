@@ -5,6 +5,7 @@ import numpy as np
 from models.atmosphere import Cp, R
 
 POINTS_PER_PROCESS = 40
+CLOSING_STAGE_NAME = "Heat Rejection"
 
 
 def _station_values(state, ideal=False):
@@ -47,13 +48,13 @@ def _sample_polytropic(start, end):
 
 
 def _sample_process(stage_name, start, end):
-    if stage_name == "Combustor":
+    if stage_name in {"Combustor", CLOSING_STAGE_NAME}:
         return _sample_linear(start, end)
 
     return _sample_polytropic(start, end)
 
 
-def _build_path(states, ideal=False):
+def _build_path(states, ideal=False, close_cycle=False):
     stations = [_station_values(state, ideal) for state in states]
     curve = []
 
@@ -66,27 +67,31 @@ def _build_path(states, ideal=False):
             segment = segment[1:]
         curve.extend(segment)
 
+    if close_cycle and len(stations) > 1:
+        segment = _sample_process(CLOSING_STAGE_NAME, stations[-1], stations[0])[1:]
+        curve.extend(segment)
+
     return {"curve": curve, "stations": stations}
 
 
 def PV_diagram(states):
     return {
-        "actual": _build_path(states, ideal=False),
-        "ideal": _build_path(states, ideal=True),
+        "actual": _build_path(states, ideal=False, close_cycle=False),
+        "ideal": _build_path(states, ideal=True, close_cycle=True),
     }
 
 
 def TS_diagram(states):
     return {
-        "actual": _build_path(states, ideal=False),
-        "ideal": _build_path(states, ideal=True),
+        "actual": _build_path(states, ideal=False, close_cycle=False),
+        "ideal": _build_path(states, ideal=True, close_cycle=True),
     }
 
 
 def TP_diagram(states):
     return {
-        "actual": _build_path(states, ideal=False),
-        "ideal": _build_path(states, ideal=True),
+        "actual": _build_path(states, ideal=False, close_cycle=False),
+        "ideal": _build_path(states, ideal=True, close_cycle=True),
     }
 
 

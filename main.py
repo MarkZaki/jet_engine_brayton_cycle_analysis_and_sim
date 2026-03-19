@@ -6,6 +6,7 @@ from solver.base import FlowState
 from solver.engine import Engine
 from solver.stages.combustor import Combustor
 from solver.stages.compressor import Compressor
+from solver.stages.inlet import Inlet
 from solver.stages.nozzle import Nozzle
 from solver.stages.turbine import Turbine
 from visualization.plots import plot_PV, plot_TP, plot_TS, plot_performance
@@ -16,6 +17,7 @@ def main():
 
     engine = Engine(
         [
+            Inlet(pressure_recovery=0.98),
             Compressor(pressure_ratio=10.0, eta_c=0.85),
             Combustor(T3=1500.0, pressure_loss=0.05),
             Turbine(eta_t=0.90, eta_mech=0.95),
