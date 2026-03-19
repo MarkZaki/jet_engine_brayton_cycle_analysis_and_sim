@@ -51,6 +51,9 @@ def _section_spec(stage_name):
 
 
 def _build_sections(states, ideal=False):
+    if hasattr(states, "states"):
+        states = states.states
+
     sections = []
     x_cursor = 0.0
 
@@ -317,7 +320,7 @@ def _annotations(sections, stations, velocities, ideal=False):
     return annotations
 
 
-def plot_engine_flow(states, ideal=False, show=True):
+def plot_engine_flow(states, ideal=False, show=True, persist=True):
     sections = _build_sections(states, ideal=ideal)
     if not sections:
         raise ValueError("At least one processed engine section is required.")
@@ -391,9 +394,12 @@ def plot_engine_flow(states, ideal=False, show=True):
         scaleratio=1,
     )
 
-    OUTPUT_DIR.mkdir(exist_ok=True)
-    filename = "engine_flow_ideal.html" if ideal else "engine_flow_actual.html"
-    output_path = OUTPUT_DIR / filename
-    fig.write_html(output_path, include_plotlyjs=True, full_html=True, auto_open=show)
-    print(f"Saved plot: {output_path.resolve()}")
+    if persist:
+        OUTPUT_DIR.mkdir(exist_ok=True)
+        filename = "engine_flow_ideal.html" if ideal else "engine_flow_actual.html"
+        output_path = OUTPUT_DIR / filename
+        fig.write_html(output_path, include_plotlyjs=True, full_html=True, auto_open=show)
+        print(f"Saved plot: {output_path.resolve()}")
+    elif show:
+        fig.show()
     return fig

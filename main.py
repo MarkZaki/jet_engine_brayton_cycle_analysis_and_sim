@@ -1,54 +1,28 @@
-from models.atmosphere import Cp, gamma
-from performance.efficiency import power_efficiency, shaft_efficiency
-from performance.metrics import compute_bwr
-from performance.thrust import compute_thrust
-from solver.base import FlowState
-from solver.engine import Engine
-from solver.stages.combustor import Combustor
-from solver.stages.compressor import Compressor
-from solver.stages.inlet import Inlet
-from solver.stages.nozzle import Nozzle
-from solver.stages.turbine import Turbine
+from configs.default import get_default_config
+from performance.metrics import summarize_result
+from solver.engine import run_engine_case
 from visualization.plots import plot_PV, plot_TP, plot_TS, plot_engine_flow, plot_performance
 
 
 def main():
-    flight_speed = 200.0
-
-    engine = Engine(
-        [
-            Inlet(pressure_recovery=0.98),
-            Compressor(pressure_ratio=10.0, eta_c=0.85),
-            Combustor(T3=1500.0, pressure_loss=0.05),
-            Turbine(eta_t=0.90, eta_mech=0.95),
-            Nozzle(cp=Cp, Pe=101325.0, gamma=gamma),
-        ]
-    )
-
-    state0 = FlowState(
-        T=288.0,
-        P=101325.0,
-        V=flight_speed,
-        m_dot=10.0,
-    )
-    state0.stage_name = "Freestream"
-
-    states = engine.run(state0)
-    final_state = states[-1]
+    config = get_default_config()
+    result = run_engine_case(config)
+    summary = summarize_result(result, V0=config["flight_speed"])
 
     print("---- ENGINE RESULTS ----")
-    print(f"Exit velocity (actual): {final_state.V:.2f} m/s")
-    print(f"Exit velocity (ideal): {final_state.V_ideal:.2f} m/s")
-    print(f"Thrust: {compute_thrust(final_state, V0=flight_speed):.2f} N")
-    print(f"Thermal efficiency proxy: {shaft_efficiency(final_state):.4f}")
-    print(f"Jet power efficiency: {power_efficiency(final_state, V0=flight_speed):.4f}")
-    print(f"BWR: {compute_bwr(final_state):.4f}")
+    print(f"Thrust: {summary['thrust_N']:.2f} N")
+    print(f"Specific thrust: {summary['specific_thrust_N_per_kg_s']:.2f} N/(kg/s)")
+    print(f"Fuel-air ratio: {summary['fuel_air_ratio']:.5f}")
+    print(f"Overall efficiency: {summary['overall_efficiency']:.4f}")
+    print(f"Jet power efficiency: {summary['jet_power_efficiency']:.4f}")
+    print(f"BWR: {summary['bwr']:.4f}")
+    print(f"Nozzle choked: {summary['nozzle_choked']}")
 
-    plot_PV(states)
-    plot_TS(states)
-    plot_TP(states)
-    plot_performance(states)
-    plot_engine_flow(states)
+    plot_PV(result, show=False, persist=True)
+    plot_TS(result, show=False, persist=True)
+    plot_TP(result, show=False, persist=True)
+    plot_performance(result, show=False, persist=True)
+    plot_engine_flow(result, show=False, persist=True)
 
 
 if __name__ == "__main__":

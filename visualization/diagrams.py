@@ -2,10 +2,12 @@ import math
 
 import numpy as np
 
-from models.atmosphere import Cp, R
-
-POINTS_PER_PROCESS = 40
 CLOSING_STAGE_NAME = "Heat Rejection"
+POINTS_PER_PROCESS = 40
+
+
+def _coerce_states(result_or_states):
+    return result_or_states.states if hasattr(result_or_states, "states") else result_or_states
 
 
 def _station_values(state, ideal=False):
@@ -16,6 +18,8 @@ def _station_values(state, ideal=False):
             "P": state.P_ideal,
             "s": state.s_ideal,
             "v": state.v_ideal,
+            "cp": state.cp,
+            "R": state.R,
         }
 
     return {
@@ -24,14 +28,20 @@ def _station_values(state, ideal=False):
         "P": state.P,
         "s": state.s,
         "v": state.v,
+        "cp": state.cp,
+        "R": state.R,
     }
 
 
 def _sample_linear(start, end):
     temperatures = np.linspace(start["T"], end["T"], POINTS_PER_PROCESS)
     pressures = np.linspace(start["P"], end["P"], POINTS_PER_PROCESS)
-    specific_volumes = R * temperatures / pressures
-    entropies = start["s"] + Cp * np.log(temperatures / start["T"]) - R * np.log(pressures / start["P"])
+    specific_volumes = start["R"] * temperatures / pressures
+    entropies = (
+        start["s"]
+        + start["cp"] * np.log(temperatures / start["T"])
+        - start["R"] * np.log(pressures / start["P"])
+    )
     return list(zip(specific_volumes, pressures, entropies, temperatures))
 
 
@@ -42,8 +52,12 @@ def _sample_polytropic(start, end):
     exponent = math.log(end["P"] / start["P"]) / math.log(start["v"] / end["v"])
     specific_volumes = np.linspace(start["v"], end["v"], POINTS_PER_PROCESS)
     pressures = start["P"] * (start["v"] / specific_volumes) ** exponent
-    temperatures = pressures * specific_volumes / R
-    entropies = start["s"] + Cp * np.log(temperatures / start["T"]) - R * np.log(pressures / start["P"])
+    temperatures = pressures * specific_volumes / start["R"]
+    entropies = (
+        start["s"]
+        + start["cp"] * np.log(temperatures / start["T"])
+        - start["R"] * np.log(pressures / start["P"])
+    )
     return list(zip(specific_volumes, pressures, entropies, temperatures))
 
 
@@ -74,28 +88,32 @@ def _build_path(states, ideal=False, close_cycle=False):
     return {"curve": curve, "stations": stations}
 
 
-def PV_diagram(states):
+def PV_diagram(result_or_states):
+    states = _coerce_states(result_or_states)
     return {
         "actual": _build_path(states, ideal=False, close_cycle=False),
         "ideal": _build_path(states, ideal=True, close_cycle=True),
     }
 
 
-def TS_diagram(states):
+def TS_diagram(result_or_states):
+    states = _coerce_states(result_or_states)
     return {
         "actual": _build_path(states, ideal=False, close_cycle=False),
         "ideal": _build_path(states, ideal=True, close_cycle=True),
     }
 
 
-def TP_diagram(states):
+def TP_diagram(result_or_states):
+    states = _coerce_states(result_or_states)
     return {
         "actual": _build_path(states, ideal=False, close_cycle=False),
         "ideal": _build_path(states, ideal=True, close_cycle=True),
     }
 
 
-def performance_diagram(states):
+def performance_diagram(result_or_states):
+    states = _coerce_states(result_or_states)
     return {
         "stage_names": [state.stage_name or "Freestream" for state in states],
         "actual_net": [state.Wt - state.Wc for state in states],

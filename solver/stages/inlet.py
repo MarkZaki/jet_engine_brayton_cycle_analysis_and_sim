@@ -1,4 +1,4 @@
-from models.atmosphere import Cp, gamma
+from models.gas import STANDARD_AIR
 from solver.base import FlowState, Stage
 from solver.cycle import (
     entropy_change,
@@ -14,21 +14,19 @@ class Inlet(Stage):
         self,
         pressure_recovery=0.98,
         exit_velocity=0.0,
-        cp=Cp,
-        gamma_value=gamma,
+        gas=STANDARD_AIR,
     ):
         super().__init__("Inlet")
         self.pressure_recovery = pressure_recovery
         self.exit_velocity = exit_velocity
-        self.cp = cp
-        self.gamma = gamma_value
+        self.gas = gas
 
     def _diffuse(self, temperature, pressure, velocity, recovery):
-        T_total = total_temperature(temperature, velocity, self.cp)
-        P_total = stagnation_pressure_from_static(temperature, pressure, T_total, self.gamma)
-        T_exit = static_temperature_from_total(T_total, self.exit_velocity, self.cp)
+        T_total = total_temperature(temperature, velocity, self.gas.cp)
+        P_total = stagnation_pressure_from_static(temperature, pressure, T_total, self.gas.gamma)
+        T_exit = static_temperature_from_total(T_total, self.exit_velocity, self.gas.cp)
         P_exit_total = recovery * P_total
-        P_exit = static_pressure_from_stagnation(T_exit, T_total, P_exit_total, self.gamma)
+        P_exit = static_pressure_from_stagnation(T_exit, T_total, P_exit_total, self.gas.gamma)
         return T_exit, P_exit
 
     def process(self, state: FlowState) -> FlowState:
@@ -44,7 +42,7 @@ class Inlet(Stage):
         new_state.T = T2
         new_state.P = P2
         new_state.V = self.exit_velocity
-        new_state.s += entropy_change(T2, state.T, P2, state.P, self.cp, state.R)
+        new_state.s += entropy_change(T2, state.T, P2, state.P, self.gas.cp, state.R)
 
         new_state.T_ideal = T2_ideal
         new_state.P_ideal = P2_ideal

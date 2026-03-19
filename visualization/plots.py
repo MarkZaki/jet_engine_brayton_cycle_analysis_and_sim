@@ -18,11 +18,14 @@ PLOT_THEME = {
 OUTPUT_DIR = Path("outputs")
 
 
-def _write_figure(fig, filename, show):
-    OUTPUT_DIR.mkdir(exist_ok=True)
-    output_path = OUTPUT_DIR / filename
-    fig.write_html(output_path, include_plotlyjs=True, full_html=True, auto_open=show)
-    print(f"Saved plot: {output_path.resolve()}")
+def _finalize_figure(fig, filename, show, persist):
+    if persist:
+        OUTPUT_DIR.mkdir(exist_ok=True)
+        output_path = OUTPUT_DIR / filename
+        fig.write_html(output_path, include_plotlyjs=True, full_html=True, auto_open=show)
+        print(f"Saved plot: {output_path.resolve()}")
+    elif show:
+        fig.show()
     return fig
 
 
@@ -81,7 +84,7 @@ def _add_station_markers(fig, stations, x_key, y_key, x_fmt, y_fmt, branch, colo
     )
 
 
-def plot_PV(states, show=True):
+def plot_PV(states, show=True, persist=True):
     data = PV_diagram(states)
     actual_v, actual_p, _, _ = zip(*data["actual"]["curve"])
     ideal_v, ideal_p, _, _ = zip(*data["ideal"]["curve"])
@@ -130,10 +133,10 @@ def plot_PV(states, show=True):
     )
 
     _apply_layout(fig, "P-v Diagram", "Specific Volume (m^3/kg)", "Pressure (Pa)")
-    return _write_figure(fig, "pv_diagram.html", show)
+    return _finalize_figure(fig, "pv_diagram.html", show, persist)
 
 
-def plot_TS(states, show=True):
+def plot_TS(states, show=True, persist=True):
     data = TS_diagram(states)
     _, _, actual_s, actual_t = zip(*data["actual"]["curve"])
     _, _, ideal_s, ideal_t = zip(*data["ideal"]["curve"])
@@ -182,10 +185,10 @@ def plot_TS(states, show=True):
     )
 
     _apply_layout(fig, "T-s Diagram", "Entropy (J/kg-K)", "Temperature (K)")
-    return _write_figure(fig, "ts_diagram.html", show)
+    return _finalize_figure(fig, "ts_diagram.html", show, persist)
 
 
-def plot_TP(states, show=True):
+def plot_TP(states, show=True, persist=True):
     data = TP_diagram(states)
     _, actual_p, _, actual_t = zip(*data["actual"]["curve"])
     _, ideal_p, _, ideal_t = zip(*data["ideal"]["curve"])
@@ -234,10 +237,10 @@ def plot_TP(states, show=True):
     )
 
     _apply_layout(fig, "T-P Diagram", "Pressure (Pa)", "Temperature (K)")
-    return _write_figure(fig, "tp_diagram.html", show)
+    return _finalize_figure(fig, "tp_diagram.html", show, persist)
 
 
-def plot_performance(states, show=True):
+def plot_performance(states, show=True, persist=True):
     data = performance_diagram(states)
 
     fig = go.Figure()
@@ -266,8 +269,8 @@ def plot_performance(states, show=True):
 
     _apply_layout(fig, "Net Specific Work by Stage", "Stage", "Specific Work (J/kg)")
     fig.update_layout(barmode="group")
-    return _write_figure(fig, "performance.html", show)
+    return _finalize_figure(fig, "performance.html", show, persist)
 
 
-def plot_engine_flow(states, ideal=False, show=True):
-    return plot_engine_flow_figure(states, ideal=ideal, show=show)
+def plot_engine_flow(states, ideal=False, show=True, persist=True):
+    return plot_engine_flow_figure(states, ideal=ideal, show=show, persist=persist)

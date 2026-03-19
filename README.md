@@ -1,13 +1,20 @@
 # Jet Engine Brayton Cycle Analysis and Simulation
 
-Student-project scaffold for a Brayton-cycle jet engine simulator.
+Student-focused Brayton-cycle jet engine simulator with:
+
+- a reusable gas model
+- actual vs theoretical cycle tracking
+- inlet, compressor, combustor, turbine, and nozzle stages
+- nozzle choking logic
+- Plotly cycle plots and thermal-flow schematic exports
+- a Streamlit interface for interactive exploration
 
 Repository: https://github.com/MarkZaki/jet_engine_brayton_cycle_analysis_and_sim
 
-## Current Status
+## Current Scope
 
-This repository currently contains only the project layout and placeholder modules.
-The physics, UI, and visualization logic still need to be implemented.
+The project now includes a working 1D engine-cycle core and a first interactive UI.
+It is still a simplified model, but it is no longer just a scaffold.
 
 ## Folder Structure
 
@@ -47,36 +54,55 @@ project_root/
 |-- configs/
 |   `-- default.py
 |
+|-- tests/
+|   |-- test_solver.py
+|   `-- test_visualization.py
+|
 |-- main.py
 `-- requirements.txt
 ```
 
-## Module Responsibilities
+## Implemented Features
 
-- `solver/`: thermodynamics and engine-stage execution flow
-- `models/`: atmosphere and gas-property helpers
-- `performance/`: thrust, efficiencies, and derived metrics
-- `visualization/`: scientific plots, schematics, and flow visuals
-- `ui/`: Streamlit interface
-- `configs/`: default inputs and presets
+- reusable `IdealGas` model in `models/gas.py`
+- ISA-based atmosphere helper in `models/atmosphere.py`
+- structured engine run result with station table export
+- combustor fuel-air ratio calculation from target turbine inlet temperature
+- turbine work balance linked to compressor demand and fuel addition
+- nozzle choking detection with pressure-thrust estimate
+- actual and theoretical `P-v`, `T-s`, `T-P`, and work plots
+- engine thermal-flow schematic with Plotly
+- Streamlit dashboard with controls, metrics, plots, station table, and a pressure-ratio sweep
 
-## UI Direction
+## Running The Project
 
-The intended look remains modern but scientific:
-
-- light engineering-style layout
-- restrained blue-gray palette
-- warm thermal accents for hot sections
-- clear units and plot labels
-
-## Setup
+### Streamlit UI
 
 ```bash
-git clone https://github.com/MarkZaki/jet_engine_brayton_cycle_analysis_and_sim.git
-cd jet_engine_brayton_cycle_analysis_and_sim
-pip install -r requirements.txt
 streamlit run ui/app.py
 ```
+
+### Script Mode
+
+```bash
+python main.py
+```
+
+Script mode writes Plotly HTML files to `outputs/`.
+
+## Validation
+
+Run the tests with:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+## Notes
+
+- The solver is a 1D thermodynamic model, not CFD.
+- The thermal-flow schematic is an engineering visualization built from station data and interpolation.
+- The ideal cycle is closed in the diagram layer for textbook comparison, while the actual engine path remains open.
 
 ## License
 
