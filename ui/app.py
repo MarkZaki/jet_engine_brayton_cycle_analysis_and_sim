@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import sys
 
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -13,11 +14,7 @@ from configs.default import get_default_config
 from models.atmosphere import isa_atmosphere
 from performance.metrics import summarize_result
 from performance.reporting import build_html_report
-from solver.engine import (
-    run_engine_case,
-    sweep_compressor_pressure_ratio,
-    sweep_flight_envelope,
-)
+import solver.engine as engine_module
 from visualization.plots import (
     figure_to_html_bytes,
     figure_to_png_bytes,
@@ -28,6 +25,41 @@ from visualization.plots import (
     plot_operating_map,
     plot_performance,
 )
+
+run_engine_case = engine_module.run_engine_case
+sweep_compressor_pressure_ratio = engine_module.sweep_compressor_pressure_ratio
+
+
+def _fallback_sweep_flight_envelope(base_config, altitudes_m, flight_speeds_mps):
+    rows = []
+
+    for altitude_m in altitudes_m:
+        atmosphere = isa_atmosphere(float(altitude_m))
+        for flight_speed in flight_speeds_mps:
+            case_config = dict(base_config)
+            case_config["altitude_m"] = float(altitude_m)
+            case_config["ambient_temperature"] = atmosphere.temperature
+            case_config["ambient_pressure"] = atmosphere.pressure
+            case_config["flight_speed"] = float(flight_speed)
+            case_config["verbose"] = False
+            result = run_engine_case(case_config)
+            summary = summarize_result(result, V0=case_config["flight_speed"])
+            rows.append(
+                {
+                    "altitude_m": float(altitude_m),
+                    "flight_speed_mps": float(flight_speed),
+                    "thrust_N": summary["thrust_N"],
+                    "specific_thrust_N_per_kg_s": summary["specific_thrust_N_per_kg_s"],
+                    "overall_efficiency": summary["overall_efficiency"],
+                    "jet_power_efficiency": summary["jet_power_efficiency"],
+                    "nozzle_choked": summary["nozzle_choked"],
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+sweep_flight_envelope = getattr(engine_module, "sweep_flight_envelope", _fallback_sweep_flight_envelope)
 
 
 def _build_sidebar_config():
