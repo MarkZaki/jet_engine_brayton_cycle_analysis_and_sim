@@ -1,95 +1,273 @@
-import numpy as np
+from pathlib import Path
+
+import plotly.graph_objects as go
 
 from visualization.diagrams import PV_diagram, TP_diagram, TS_diagram, performance_diagram
+from visualization.flow import plot_engine_flow as plot_engine_flow_figure
 
 
-def _annotate_points(ax, stations, x_key, y_key):
-    for station in stations:
-        ax.annotate(
-            station["label"],
-            (station[x_key], station[y_key]),
-            textcoords="offset points",
-            xytext=(6, 6),
-            fontsize=8,
+PLOT_THEME = {
+    "paper_bgcolor": "#F6F8FB",
+    "plot_bgcolor": "#FFFFFF",
+    "font_color": "#102A43",
+    "gridcolor": "#D9E2EC",
+    "actual_color": "#0F6CBD",
+    "ideal_color": "#7B8794",
+    "accent_color": "#C44536",
+}
+OUTPUT_DIR = Path("outputs")
+
+
+def _write_figure(fig, filename, show):
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    output_path = OUTPUT_DIR / filename
+    fig.write_html(output_path, include_plotlyjs=True, full_html=True, auto_open=show)
+    print(f"Saved plot: {output_path.resolve()}")
+    return fig
+
+
+def _apply_layout(fig, title, x_title, y_title):
+    fig.update_layout(
+        template="plotly_white",
+        title={"text": title, "x": 0.04},
+        paper_bgcolor=PLOT_THEME["paper_bgcolor"],
+        plot_bgcolor=PLOT_THEME["plot_bgcolor"],
+        font={"family": "Arial", "color": PLOT_THEME["font_color"], "size": 13},
+        hoverlabel={"bgcolor": "#102A43", "font_color": "#FFFFFF"},
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1.0},
+        margin={"l": 72, "r": 36, "t": 72, "b": 62},
+    )
+    fig.update_xaxes(
+        title=x_title,
+        showgrid=True,
+        gridcolor=PLOT_THEME["gridcolor"],
+        zeroline=False,
+    )
+    fig.update_yaxes(
+        title=y_title,
+        showgrid=True,
+        gridcolor=PLOT_THEME["gridcolor"],
+        zeroline=False,
+    )
+    return fig
+
+
+def _add_station_markers(fig, stations, x_key, y_key, x_fmt, y_fmt, branch, color):
+    hover_text = [
+        (
+            f"<b>{station['label']}</b><br>"
+            f"{x_key}: {x_fmt(station[x_key])}<br>"
+            f"{y_key}: {y_fmt(station[y_key])}"
         )
+        for station in stations
+    ]
+    fig.add_trace(
+        go.Scatter(
+            x=[station[x_key] for station in stations],
+            y=[station[y_key] for station in stations],
+            mode="markers+text",
+            text=[station["label"] for station in stations],
+            textposition="top center",
+            textfont={"size": 10, "color": color},
+            marker={
+                "size": 8,
+                "color": color,
+                "line": {"width": 1.5, "color": "#FFFFFF"},
+            },
+            name=f"{branch} stations",
+            hovertemplate="%{customdata}<extra></extra>",
+            customdata=hover_text,
+        )
+    )
 
 
-def plot_PV(states):
-    import matplotlib.pyplot as plt
-
+def plot_PV(states, show=True):
     data = PV_diagram(states)
     actual_v, actual_p, _, _ = zip(*data["actual"]["curve"])
     ideal_v, ideal_p, _, _ = zip(*data["ideal"]["curve"])
 
-    fig, ax = plt.subplots()
-    ax.plot(ideal_v, ideal_p, linestyle="--", linewidth=2, label="Theoretical")
-    ax.plot(actual_v, actual_p, linewidth=2, label="Actual")
-    _annotate_points(ax, data["actual"]["stations"], "v", "P")
-    ax.set_title("P-v Diagram")
-    ax.set_xlabel("Specific Volume (m^3/kg)")
-    ax.set_ylabel("Pressure (Pa)")
-    ax.grid(True, alpha=0.3)
-    ax.legend()
-    plt.tight_layout()
-    plt.show()
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=ideal_v,
+            y=ideal_p,
+            mode="lines",
+            name="Theoretical cycle",
+            line={"color": PLOT_THEME["ideal_color"], "width": 3, "dash": "dash"},
+            hovertemplate="v: %{x:.4f} m^3/kg<br>P: %{y:.0f} Pa<extra>Theoretical</extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=actual_v,
+            y=actual_p,
+            mode="lines",
+            name="Actual cycle",
+            line={"color": PLOT_THEME["actual_color"], "width": 3},
+            hovertemplate="v: %{x:.4f} m^3/kg<br>P: %{y:.0f} Pa<extra>Actual</extra>",
+        )
+    )
+
+    _add_station_markers(
+        fig,
+        data["ideal"]["stations"],
+        "v",
+        "P",
+        lambda value: f"{value:.4f} m^3/kg",
+        lambda value: f"{value:.0f} Pa",
+        "Theoretical",
+        PLOT_THEME["ideal_color"],
+    )
+    _add_station_markers(
+        fig,
+        data["actual"]["stations"],
+        "v",
+        "P",
+        lambda value: f"{value:.4f} m^3/kg",
+        lambda value: f"{value:.0f} Pa",
+        "Actual",
+        PLOT_THEME["actual_color"],
+    )
+
+    _apply_layout(fig, "P-v Diagram", "Specific Volume (m^3/kg)", "Pressure (Pa)")
+    return _write_figure(fig, "pv_diagram.html", show)
 
 
-def plot_TS(states):
-    import matplotlib.pyplot as plt
-
+def plot_TS(states, show=True):
     data = TS_diagram(states)
     _, _, actual_s, actual_t = zip(*data["actual"]["curve"])
     _, _, ideal_s, ideal_t = zip(*data["ideal"]["curve"])
 
-    fig, ax = plt.subplots()
-    ax.plot(ideal_s, ideal_t, linestyle="--", linewidth=2, label="Theoretical")
-    ax.plot(actual_s, actual_t, linewidth=2, label="Actual")
-    _annotate_points(ax, data["actual"]["stations"], "s", "T")
-    ax.set_title("T-s Diagram")
-    ax.set_xlabel("Entropy (J/kg-K)")
-    ax.set_ylabel("Temperature (K)")
-    ax.grid(True, alpha=0.3)
-    ax.legend()
-    plt.tight_layout()
-    plt.show()
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=ideal_s,
+            y=ideal_t,
+            mode="lines",
+            name="Theoretical cycle",
+            line={"color": PLOT_THEME["ideal_color"], "width": 3, "dash": "dash"},
+            hovertemplate="s: %{x:.1f} J/kg-K<br>T: %{y:.1f} K<extra>Theoretical</extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=actual_s,
+            y=actual_t,
+            mode="lines",
+            name="Actual cycle",
+            line={"color": PLOT_THEME["actual_color"], "width": 3},
+            hovertemplate="s: %{x:.1f} J/kg-K<br>T: %{y:.1f} K<extra>Actual</extra>",
+        )
+    )
+
+    _add_station_markers(
+        fig,
+        data["ideal"]["stations"],
+        "s",
+        "T",
+        lambda value: f"{value:.1f} J/kg-K",
+        lambda value: f"{value:.1f} K",
+        "Theoretical",
+        PLOT_THEME["ideal_color"],
+    )
+    _add_station_markers(
+        fig,
+        data["actual"]["stations"],
+        "s",
+        "T",
+        lambda value: f"{value:.1f} J/kg-K",
+        lambda value: f"{value:.1f} K",
+        "Actual",
+        PLOT_THEME["actual_color"],
+    )
+
+    _apply_layout(fig, "T-s Diagram", "Entropy (J/kg-K)", "Temperature (K)")
+    return _write_figure(fig, "ts_diagram.html", show)
 
 
-def plot_TP(states):
-    import matplotlib.pyplot as plt
-
+def plot_TP(states, show=True):
     data = TP_diagram(states)
     _, actual_p, _, actual_t = zip(*data["actual"]["curve"])
     _, ideal_p, _, ideal_t = zip(*data["ideal"]["curve"])
 
-    fig, ax = plt.subplots()
-    ax.plot(ideal_p, ideal_t, linestyle="--", linewidth=2, label="Theoretical")
-    ax.plot(actual_p, actual_t, linewidth=2, label="Actual")
-    _annotate_points(ax, data["actual"]["stations"], "P", "T")
-    ax.set_title("T-P Diagram")
-    ax.set_xlabel("Pressure (Pa)")
-    ax.set_ylabel("Temperature (K)")
-    ax.grid(True, alpha=0.3)
-    ax.legend()
-    plt.tight_layout()
-    plt.show()
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=ideal_p,
+            y=ideal_t,
+            mode="lines",
+            name="Theoretical path",
+            line={"color": PLOT_THEME["ideal_color"], "width": 3, "dash": "dash"},
+            hovertemplate="P: %{x:.0f} Pa<br>T: %{y:.1f} K<extra>Theoretical</extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=actual_p,
+            y=actual_t,
+            mode="lines",
+            name="Actual path",
+            line={"color": PLOT_THEME["actual_color"], "width": 3},
+            hovertemplate="P: %{x:.0f} Pa<br>T: %{y:.1f} K<extra>Actual</extra>",
+        )
+    )
+
+    _add_station_markers(
+        fig,
+        data["ideal"]["stations"],
+        "P",
+        "T",
+        lambda value: f"{value:.0f} Pa",
+        lambda value: f"{value:.1f} K",
+        "Theoretical",
+        PLOT_THEME["ideal_color"],
+    )
+    _add_station_markers(
+        fig,
+        data["actual"]["stations"],
+        "P",
+        "T",
+        lambda value: f"{value:.0f} Pa",
+        lambda value: f"{value:.1f} K",
+        "Actual",
+        PLOT_THEME["actual_color"],
+    )
+
+    _apply_layout(fig, "T-P Diagram", "Pressure (Pa)", "Temperature (K)")
+    return _write_figure(fig, "tp_diagram.html", show)
 
 
-def plot_performance(states):
-    import matplotlib.pyplot as plt
-
+def plot_performance(states, show=True):
     data = performance_diagram(states)
-    x = np.arange(len(data["stage_names"]))
-    width = 0.35
 
-    fig, ax = plt.subplots()
-    ax.bar(x - width / 2, data["ideal_net"], width, label="Theoretical net work")
-    ax.bar(x + width / 2, data["actual_net"], width, label="Actual net work")
-    ax.set_title("Net Specific Work by Stage")
-    ax.set_xlabel("Stage")
-    ax.set_ylabel("Specific Work (J/kg)")
-    ax.set_xticks(x)
-    ax.set_xticklabels(data["stage_names"], rotation=20)
-    ax.grid(True, axis="y", alpha=0.3)
-    ax.legend()
-    plt.tight_layout()
-    plt.show()
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=data["stage_names"],
+            y=data["ideal_net"],
+            name="Theoretical net work",
+            marker={"color": PLOT_THEME["ideal_color"]},
+            text=[f"{value:.0f}" for value in data["ideal_net"]],
+            textposition="outside",
+            hovertemplate="Stage: %{x}<br>Net work: %{y:.1f} J/kg<extra>Theoretical</extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=data["stage_names"],
+            y=data["actual_net"],
+            name="Actual net work",
+            marker={"color": PLOT_THEME["actual_color"]},
+            text=[f"{value:.0f}" for value in data["actual_net"]],
+            textposition="outside",
+            hovertemplate="Stage: %{x}<br>Net work: %{y:.1f} J/kg<extra>Actual</extra>",
+        )
+    )
+
+    _apply_layout(fig, "Net Specific Work by Stage", "Stage", "Specific Work (J/kg)")
+    fig.update_layout(barmode="group")
+    return _write_figure(fig, "performance.html", show)
+
+
+def plot_engine_flow(states, ideal=False, show=True):
+    return plot_engine_flow_figure(states, ideal=ideal, show=show)

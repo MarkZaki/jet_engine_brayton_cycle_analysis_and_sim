@@ -9,7 +9,7 @@ from solver.stages.compressor import Compressor
 from solver.stages.inlet import Inlet
 from solver.stages.nozzle import Nozzle
 from solver.stages.turbine import Turbine
-from visualization.plots import plot_PV, plot_TP, plot_TS, plot_performance
+from visualization.plots import plot_PV, plot_TP, plot_TS, plot_engine_flow, plot_performance
 
 
 def main():
@@ -48,6 +48,7 @@ def main():
     plot_TS(states)
     plot_TP(states)
     plot_performance(states)
+    plot_engine_flow(states)
 
 
 if __name__ == "__main__":
