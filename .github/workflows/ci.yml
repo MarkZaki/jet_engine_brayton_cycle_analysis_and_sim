@@ -25,4 +25,4 @@ jobs:
           pip install -r requirements.txt
 
       - name: Validate Python scaffold
-        run: python -m compileall app src tests
+        run: python -m compileall app.py engine_sim
