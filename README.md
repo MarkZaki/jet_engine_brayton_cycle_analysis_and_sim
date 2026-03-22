@@ -1,89 +1,71 @@
-# Jet Engine Brayton Cycle Analysis and Simulation
+# Brayton Cycle Thermodynamics Project
 
-Student-focused Brayton-cycle jet engine simulator with:
+This project analyzes a turbojet Brayton cycle using a clean, course-focused thermodynamics model.
 
-- a reusable gas model with optional temperature-dependent properties
-- explicit static and total station tracking
+It is built around the main components students usually discuss in an introductory analysis:
+
+- inlet
+- compressor
+- combustor
+- turbine
+- nozzle
+
+The project tracks actual and theoretical cycle behavior, plots the common thermodynamic diagrams,
+shows station-by-station properties, and provides an interactive Streamlit interface for studying
+how design choices affect thrust, fuel use, and efficiency.
+
+## Features
+
+- constant-property ideal-gas model
+- ISA atmosphere support for altitude studies
 - actual vs theoretical cycle tracking
-- turbojet and turbofan architectures
-- optional afterburner, dual-stream nozzle support, and simple component maps
-- nozzle choking logic and fixed-geometry nozzle constraints
-- Plotly cycle plots, engine schematic, compare mode, and operating-map exports
-- a Streamlit interface for interactive exploration, presets, JSON save/load, and reporting
+- station-by-station static and total properties
+- thrust, fuel-air ratio, fuel flow, specific impulse, efficiencies, and back work ratio
+- `T-s`, `P-v`, `T-P`, and stage-work plots
+- labeled engine schematic with useful state information
+- compare mode for two input cases
+- parameter sweep tools
+- CSV and HTML report export
 
-Repository: https://github.com/MarkZaki/jet_engine_brayton_cycle_analysis_and_sim
-
-## Current Scope
-
-The project now includes a working 1D engine-cycle core, optional dual-stream turbofan support,
-simple off-design component maps, richer reporting metrics, and a more capable interactive UI.
-It is still a simplified model, but it is now much closer to a compact design-study tool than a scaffold.
-
-## Folder Structure
+## Project Structure
 
 ```text
 project_root/
 |
-|-- solver/
-|   |-- __init__.py
-|   |-- base.py
-|   |-- engine.py
-|   |-- cycle.py
-|   `-- stages/
-|       |-- compressor.py
-|       |-- combustor.py
-|       |-- turbine.py
-|       |-- nozzle.py
-|       |-- inlet.py
-|       `-- afterburner.py
+|-- configs/
+|   `-- default.py
 |
 |-- models/
 |   |-- atmosphere.py
 |   `-- gas.py
 |
 |-- performance/
-|   |-- thrust.py
 |   |-- efficiency.py
-|   `-- metrics.py
+|   |-- metrics.py
+|   |-- reporting.py
+|   `-- thrust.py
 |
-|-- visualization/
-|   |-- plots.py
-|   |-- diagrams.py
-|   `-- flow.py
-|
-|-- ui/
-|   `-- app.py
-|
-|-- configs/
-|   `-- default.py
+|-- solver/
+|   |-- base.py
+|   |-- cycle.py
+|   `-- engine.py
 |
 |-- tests/
 |   |-- test_solver.py
 |   `-- test_visualization.py
 |
+|-- ui/
+|   `-- app.py
+|
+|-- visualization/
+|   |-- diagrams.py
+|   |-- flow.py
+|   `-- plots.py
+|
 |-- main.py
-`-- requirements.txt
+|-- requirements.txt
+`-- streamlit_app.py
 ```
-
-## Implemented Features
-
-- reusable `IdealGas` model in `models/gas.py`
-- typed `EngineConfig` model and preset library in `configs/default.py`
-- ISA-based atmosphere helper in `models/atmosphere.py`
-- structured engine run result with station table export, assumptions, and equations
-- explicit static vs total station properties and component delta tables
-- speed-based and Mach-based flight input
-- combustor fuel-air ratio calculation from target turbine inlet temperature
-- dual-spool turbofan work balance with separate fan / HP compressor loads
-- optional afterburner reheat stage with extra fuel addition and pressure loss
-- core and bypass nozzle handling with choking, fixed-geometry constraints, and pressure-thrust estimates
-- simple off-design compressor and turbine map penalties
-- config validation and infeasible operating-point warnings
-- thrust, TSFC, specific impulse, fuel flow, core/bypass thrust split, and sizing outputs
-- actual and theoretical `P-v`, `T-s`, `T-P`, and work plots
-- geometry-linked engine thermal-flow schematic with a bypass overlay for turbofan cases
-- Streamlit dashboard with presets, compare mode, save/load config JSON, generalized sweeps, operating maps, report/assumptions view, and export tools
-- CSV, JSON, HTML, and PNG export support
 
 ## Running The Project
 
@@ -99,27 +81,55 @@ streamlit run streamlit_app.py
 python main.py
 ```
 
-Script mode writes Plotly HTML files to `outputs/`.
-It also writes station/component CSV tables, summary metrics, and an HTML report.
+## Using The Sweep Tab
+
+The Sweep tab performs a one-at-a-time parameter study.
+
+How to use it:
+
+1. Set your baseline case in the sidebar.
+2. Open the Sweep tab and choose one variable to study.
+3. Enter the `Start`, `End`, and `Points` values.
+4. Read the plot and table to see how thrust and overall efficiency change across the selected range.
+
+How it works:
+
+- The app creates evenly spaced values between the chosen start and end points.
+- For each value, it builds a fresh case with only that one parameter changed.
+- It then reruns the full Brayton-cycle solver for that case.
+- This means every plotted point is a real solved operating point, not an interpolation.
+
+In mathematical form, the sweep values are generated as:
+
+```text
+x_i = x_min + i(x_max - x_min)/(N - 1)
+```
+
+For each `x_i`, the solver evaluates a new case and recomputes the full cycle, including:
+
+- inlet total conditions
+- compressor temperature rise and work
+- combustor heat addition and fuel-air ratio
+- turbine work balance
+- nozzle exit state and thrust
+
+Important notes:
+
+- Only one parameter is varied at a time.
+- All other inputs stay fixed at the current baseline settings.
+- If altitude is swept, ambient temperature and pressure are recalculated from the ISA atmosphere model at each point.
+- If flight speed is swept, the sweep is solved in direct speed mode so the selected speed values are used exactly.
 
 ## Validation
 
-Run the tests with:
-
 ```bash
 python -m unittest discover -s tests -v
-# or
-pytest -q
 ```
 
 ## Notes
 
-- The solver is a 1D thermodynamic model, not CFD.
-- The turbofan and component-map features use simplified engineering approximations intended for design studies, not certified engine prediction.
-- Invalid configs are rejected before solving, and weak-cycle cases are flagged as infeasible instead of being hidden behind impossible geometry.
-- The thermal-flow schematic is an engineering visualization built from station data and interpolation.
-- Component geometry in the schematic is scaled from solved station areas, not arbitrary fixed heights.
-- The ideal cycle is closed in the diagram layer for textbook comparison, while the actual engine path remains open.
+- This is a one-dimensional steady-flow thermodynamic model, not CFD.
+- The report and interface focus on thermodynamic interpretation, not detailed engine manufacturing design.
 
 ## License
 

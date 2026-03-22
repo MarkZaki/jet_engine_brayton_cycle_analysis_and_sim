@@ -46,10 +46,7 @@ class StationRecord:
     turbine_work_J_per_kg_air: float
     pressure_thrust_N: float
     nozzle_choked: bool
-    core_air_mass_flow_kg_s: float
-    bypass_air_mass_flow_kg_s: float
-    total_air_mass_flow_kg_s: float
-    bypass_pressure_thrust_N: float
+    mass_flow_rate_kg_s: float
     infeasible: bool
     status_message: str
 
@@ -76,7 +73,6 @@ class FlowState:
         self.V = V
         self.m_dot = m_dot
         self.total_air_mass_flow = m_dot
-        self.bypass_air_mass_flow = 0.0
 
         self.s = 0.0
         self.v = 0.0
@@ -88,18 +84,11 @@ class FlowState:
         self.Wc = Wc
         self.Wt = Wt
         self.Qin = Qin
-        self.work_breakdown: dict[str, float] = {}
         self.fuel_air_ratio = 0.0
         self.pressure_thrust = 0.0
         self.exit_area = 0.0
         self.throat_area = 0.0
         self.nozzle_choked = False
-        self.bypass_exit_velocity = 0.0
-        self.bypass_exit_mach = 0.0
-        self.bypass_exit_area = 0.0
-        self.bypass_throat_area = 0.0
-        self.bypass_pressure_thrust = 0.0
-        self.bypass_nozzle_choked = False
         self.infeasible = False
         self.warnings: list[str] = []
 
@@ -116,7 +105,6 @@ class FlowState:
         self.Wc_ideal = Wc
         self.Wt_ideal = Wt
         self.Qin_ideal = Qin
-        self.work_breakdown_ideal: dict[str, float] = {}
         self.fuel_air_ratio_ideal = 0.0
         self.pressure_thrust_ideal = 0.0
         self.exit_area_ideal = 0.0
@@ -151,19 +139,11 @@ class FlowState:
             "exit_area",
             "throat_area",
             "nozzle_choked",
-            "bypass_exit_velocity",
-            "bypass_exit_mach",
-            "bypass_exit_area",
-            "bypass_throat_area",
-            "bypass_pressure_thrust",
-            "bypass_nozzle_choked",
             "infeasible",
             "total_air_mass_flow",
-            "bypass_air_mass_flow",
         ):
             setattr(new, name, getattr(self, name))
         new.warnings = list(self.warnings)
-        new.work_breakdown = dict(self.work_breakdown)
 
         for name in (
             "T_ideal",
@@ -186,7 +166,6 @@ class FlowState:
             "nozzle_choked_ideal",
         ):
             setattr(new, name, getattr(self, name))
-        new.work_breakdown_ideal = dict(self.work_breakdown_ideal)
         new.stage_name = self.stage_name
         new.stage_index = self.stage_index
         return new
@@ -198,10 +177,6 @@ class FlowState:
     @property
     def m_dot_actual(self) -> float:
         return self.m_dot * (1.0 + self.fuel_air_ratio)
-
-    @property
-    def m_dot_ideal(self) -> float:
-        return self.m_dot * (1.0 + self.fuel_air_ratio_ideal)
 
     @property
     def core_air_mass_flow(self) -> float:
@@ -233,14 +208,6 @@ class FlowState:
         self.Tt_ideal = temperature_total
         self.Pt_ideal = pressure_total
 
-    def add_work(self, key: str, value: float, ideal: bool = False) -> None:
-        target = self.work_breakdown_ideal if ideal else self.work_breakdown
-        target[key] = target.get(key, 0.0) + value
-
-    def get_work(self, key: str, ideal: bool = False) -> float:
-        source = self.work_breakdown_ideal if ideal else self.work_breakdown
-        return source.get(key, 0.0)
-
     def add_warning(self, message: str) -> None:
         if message and message not in self.warnings:
             self.warnings.append(message)
@@ -266,7 +233,8 @@ class FlowState:
         stagnation_ideal = stagnation_state_from_static(self.T_ideal, self.P_ideal, self.V_ideal, self.gas)
         self.Tt_ideal = stagnation_ideal["temperature"]
         self.Pt_ideal = stagnation_ideal["pressure"]
-        self.area_ideal = flow_area(self.m_dot_ideal, self.rho_ideal, self.V_ideal) if self.V_ideal > 1e-9 else 0.0
+        ideal_mass_flow = self.m_dot * (1.0 + self.fuel_air_ratio_ideal)
+        self.area_ideal = flow_area(ideal_mass_flow, self.rho_ideal, self.V_ideal) if self.V_ideal > 1e-9 else 0.0
 
     def to_station_record(self) -> StationRecord:
         return StationRecord(
@@ -298,10 +266,7 @@ class FlowState:
             turbine_work_J_per_kg_air=self.Wt,
             pressure_thrust_N=self.pressure_thrust,
             nozzle_choked=self.nozzle_choked,
-            core_air_mass_flow_kg_s=self.m_dot,
-            bypass_air_mass_flow_kg_s=self.bypass_air_mass_flow,
-            total_air_mass_flow_kg_s=self.total_air_mass_flow,
-            bypass_pressure_thrust_N=self.bypass_pressure_thrust,
+            mass_flow_rate_kg_s=self.m_dot,
             infeasible=self.infeasible,
             status_message=self.status_message,
         )
@@ -313,16 +278,15 @@ class EngineRunResult:
         states: list[FlowState],
         gas: IdealGas,
         config: dict[str, Any],
-        extras: dict[str, Any] | None = None,
         assumptions: list[str] | None = None,
         equations: list[str] | None = None,
     ) -> None:
         self.states = states
         self.gas = gas
         self.config = config
-        self.extras = extras or {}
         self.assumptions = assumptions or []
         self.equations = equations or []
+        self.extras: dict[str, Any] = {}
 
     def __iter__(self):
         return iter(self.states)
@@ -366,18 +330,12 @@ class EngineRunResult:
             rows.append(
                 {
                     "stage_name": outlet.stage_name or f"Stage {index}",
-                    "actual_delta_static_temperature_K": outlet.T - inlet.T,
                     "actual_delta_total_temperature_K": outlet.Tt - inlet.Tt,
-                    "actual_static_pressure_ratio": outlet.P / inlet.P if inlet.P else 0.0,
                     "actual_total_pressure_ratio": outlet.Pt / inlet.Pt if inlet.Pt else 0.0,
                     "actual_delta_velocity_mps": outlet.V - inlet.V,
-                    "actual_area_ratio": outlet.area / inlet.area if inlet.area > 0 else 0.0,
-                    "ideal_delta_static_temperature_K": outlet.T_ideal - inlet.T_ideal,
                     "ideal_delta_total_temperature_K": outlet.Tt_ideal - inlet.Tt_ideal,
-                    "ideal_static_pressure_ratio": outlet.P_ideal / inlet.P_ideal if inlet.P_ideal else 0.0,
                     "ideal_total_pressure_ratio": outlet.Pt_ideal / inlet.Pt_ideal if inlet.Pt_ideal else 0.0,
                     "ideal_delta_velocity_mps": outlet.V_ideal - inlet.V_ideal,
-                    "ideal_area_ratio": outlet.area_ideal / inlet.area_ideal if inlet.area_ideal > 0 else 0.0,
                     "delta_heat_input_J_per_kg_air": outlet.Qin - inlet.Qin,
                     "delta_compressor_work_J_per_kg_air": outlet.Wc - inlet.Wc,
                     "delta_turbine_work_J_per_kg_air": outlet.Wt - inlet.Wt,

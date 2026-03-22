@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "jet-engine-brayton-sim"
 version = "0.1.0"
-description = "Student-focused Brayton cycle engine simulator with turbojet and turbofan modes."
+description = "Brayton-cycle thermodynamics simulator for an introductory course project."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

@@ -286,46 +286,5 @@ def plot_performance(states, show=True, persist=True):
     return _finalize_figure(fig, "performance.html", show, persist)
 
 
-def plot_operating_map(surface_df, metric="thrust_N", show=True, persist=True):
-    x_key = "mach_number" if "flight_input_mode" in surface_df.columns and surface_df["flight_input_mode"].eq("mach").all() else "flight_speed_mps"
-    pivot = surface_df.pivot(index="altitude_m", columns=x_key, values=metric)
-    metric_label = {
-        "thrust_N": "Thrust (N)",
-        "overall_efficiency": "Overall Efficiency",
-        "specific_thrust_N_per_kg_s": "Specific Thrust (N/(kg/s))",
-        "tsfc_kg_per_N_s": "TSFC (kg/N-s)",
-    }.get(metric, metric)
-    colorscale = "Turbo" if "efficiency" not in metric else "Viridis"
-
-    fig = go.Figure(
-        data=
-        [
-            go.Heatmap(
-                x=pivot.columns.tolist(),
-                y=pivot.index.tolist(),
-                z=pivot.values,
-                colorscale=colorscale,
-                colorbar={"title": metric_label},
-                hovertemplate=(
-                    "Speed: %{x:.0f} m/s<br>"
-                    "Altitude: %{y:.0f} m<br>"
-                    f"{metric_label}: %{{z:.3f}}<extra></extra>"
-                ),
-            )
-        ]
-    )
-    fig.update_layout(
-        template="plotly_white",
-        title={"text": f"Operating Map: {metric_label}", "x": 0.04},
-        paper_bgcolor=PLOT_THEME["paper_bgcolor"],
-        plot_bgcolor=PLOT_THEME["plot_bgcolor"],
-        font={"family": "Arial", "color": PLOT_THEME["font_color"], "size": 13},
-        margin={"l": 72, "r": 36, "t": 72, "b": 62},
-    )
-    fig.update_xaxes(title="Mach Number" if x_key == "mach_number" else "Flight Speed (m/s)", gridcolor=PLOT_THEME["gridcolor"])
-    fig.update_yaxes(title="Altitude (m)", gridcolor=PLOT_THEME["gridcolor"])
-    return _finalize_figure(fig, "operating_map.html", show, persist)
-
-
 def plot_engine_flow(states, ideal=False, show=True, persist=True):
     return plot_engine_flow_figure(states, ideal=ideal, show=show, persist=persist)

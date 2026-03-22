@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 import sys
 
@@ -13,479 +12,318 @@ if __package__ in {None, ""}:
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
 
-from configs.default import get_preset_config, list_presets
+from configs.default import get_default_config
 from performance.metrics import summarize_result
 from performance.reporting import build_html_report
-from solver.engine import run_engine_case, sweep_flight_envelope, sweep_parameter
+from solver.engine import run_engine_case, sweep_parameter
 from visualization.plots import (
     figure_to_html_bytes,
-    figure_to_png_bytes,
     plot_PV,
     plot_TP,
     plot_TS,
     plot_engine_flow,
-    plot_operating_map,
     plot_performance,
 )
 
 
-def _load_json_config(uploaded_file) -> dict:
-    if uploaded_file is None:
-        return {}
-    return json.loads(uploaded_file.getvalue().decode("utf-8"))
+SUMMARY_KEYS = [
+    "thrust_N",
+    "specific_thrust_N_per_kg_s",
+    "fuel_air_ratio",
+    "fuel_flow_kg_s",
+    "specific_impulse_s",
+    "compressor_work_J_per_kg",
+    "turbine_work_J_per_kg",
+    "heat_input_J_per_kg",
+    "bwr",
+    "thermal_efficiency",
+    "propulsive_efficiency",
+    "overall_efficiency",
+    "exit_velocity_mps",
+    "exit_mach",
+    "exit_area_m2",
+    "nozzle_choked",
+    "feasible",
+]
+
+COMPARISON_KEYS = [
+    "thrust_N",
+    "specific_thrust_N_per_kg_s",
+    "fuel_air_ratio",
+    "fuel_flow_kg_s",
+    "specific_impulse_s",
+    "thermal_efficiency",
+    "propulsive_efficiency",
+    "overall_efficiency",
+    "bwr",
+    "exit_velocity_mps",
+]
+
+SWEEP_OPTIONS = {
+    "Compressor Pressure Ratio": "compressor_pressure_ratio",
+    "Turbine Inlet Temperature": "turbine_inlet_temperature",
+    "Compressor Efficiency": "compressor_efficiency",
+    "Turbine Efficiency": "turbine_efficiency",
+    "Flight Speed": "flight_speed",
+    "Altitude": "altitude_m",
+}
+
+SWEEP_LABELS = {
+    "compressor_pressure_ratio": "Compressor pressure ratio",
+    "turbine_inlet_temperature": "Turbine inlet temperature",
+    "compressor_efficiency": "Compressor efficiency",
+    "turbine_efficiency": "Turbine efficiency",
+    "flight_speed": "Flight speed",
+    "altitude_m": "Altitude",
+}
+
+METRIC_HELP = {
+    "thrust": "F = m_dot_a[(1 + f)Ve - V0] + (Pe - P0)Ae",
+    "thermal": "eta_th = {0.5[(1 + f)Ve^2 - V0^2]} / q_in",
+    "overall": "eta_o = FV0 / (m_dot_a q_in) = eta_th eta_p",
+    "isp": "Isp = F / (m_dot_f g0)",
+    "fuel_air": "f = cp(Tt3 - Tt2) / (eta_b LHV)",
+}
+
+METRIC_LATEX = {
+    "Thrust": r"F = \dot{m}_a[(1+f)V_e - V_0] + (P_e - P_0)A_e",
+    "Specific thrust": r"\frac{F}{\dot{m}_a}",
+    "Fuel-air ratio": r"f = \frac{c_p(T_{t,3} - T_{t,2})}{\eta_b \, LHV}",
+    "Fuel flow": r"\dot{m}_f = f \, \dot{m}_a",
+    "Specific impulse": r"I_{sp} = \frac{F}{\dot{m}_f g_0}",
+    "Back work ratio": r"\mathrm{BWR} = \frac{w_c}{w_t}",
+    "Thermal efficiency": r"\eta_{th} = \frac{\frac{1}{2}[(1+f)V_e^2 - V_0^2]}{q_{in}}",
+    "Propulsive efficiency": r"\eta_p = \frac{F V_0}{\dot{m}_a \, \frac{1}{2}[(1+f)V_e^2 - V_0^2]}",
+    "Overall efficiency": r"\eta_o = \frac{F V_0}{\dot{m}_a q_{in}} = \eta_{th}\eta_p",
+}
 
 
-def _metric_card(label: str, value: str, help_text: str | None = None) -> None:
-    st.metric(label, value, help=help_text)
+def _linspace(start: float, end: float, count: int) -> list[float]:
+    if count <= 1:
+        return [float(start)]
+    step = (end - start) / (count - 1)
+    return [float(start + index * step) for index in range(count)]
 
 
-def _optional_area_input(label: str, key_prefix: str, default_value):
-    enabled = st.checkbox(f"Lock {label}", value=default_value is not None, key=f"{key_prefix}_enabled")
-    if not enabled:
-        return None
-    value = 0.0 if default_value is None else float(default_value)
-    return st.number_input(label, min_value=0.0, value=value, step=0.001, format="%.4f", key=f"{key_prefix}_value")
-
-
-def _base_config_from_sidebar() -> dict:
-    preset_name = st.sidebar.selectbox("Preset", list_presets(), index=0)
-    uploaded = st.sidebar.file_uploader("Load Config JSON", type=["json"])
-    defaults = get_preset_config(preset_name)
-    defaults.update(_load_json_config(uploaded))
-    defaults["preset_name"] = preset_name if uploaded is None else defaults.get("preset_name", preset_name)
-    return defaults
-
-
-def _build_sidebar_config() -> dict:
-    defaults = _base_config_from_sidebar()
-    st.sidebar.header("Configuration")
+def _build_sidebar_config() -> tuple[dict, bool]:
+    defaults = get_default_config()
     config = dict(defaults)
 
-    config["architecture"] = st.sidebar.selectbox(
-        "Architecture",
-        ["turbojet", "turbofan"],
-        index=0 if defaults["architecture"] == "turbojet" else 1,
-    )
+    st.sidebar.header("Cycle Inputs")
     config["flight_input_mode"] = st.sidebar.radio(
         "Flight Input",
         ["speed", "mach"],
         index=0 if defaults["flight_input_mode"] == "speed" else 1,
         horizontal=True,
     )
-    config["altitude_m"] = float(
-        st.sidebar.slider("Altitude (m)", 0, 16000, int(defaults["altitude_m"]), step=250)
-    )
+    config["altitude_m"] = float(st.sidebar.slider("Altitude (m)", 0, 15000, int(defaults["altitude_m"]), step=250))
     if config["flight_input_mode"] == "speed":
-        config["flight_speed"] = st.sidebar.slider(
-            "Flight Speed (m/s)",
-            0.0,
-            450.0,
-            float(defaults["flight_speed"]),
-            step=5.0,
+        config["flight_speed"] = float(
+            st.sidebar.slider("Flight Speed (m/s)", 0.0, 400.0, float(defaults["flight_speed"]), step=5.0)
         )
     else:
-        config["flight_mach_number"] = st.sidebar.slider(
-            "Flight Mach",
-            0.0,
-            2.5,
-            float(defaults["flight_mach_number"]),
-            step=0.02,
+        config["flight_mach_number"] = float(
+            st.sidebar.slider("Flight Mach", 0.0, 2.0, float(defaults["flight_mach_number"]), step=0.02)
         )
-    config["mass_flow_rate"] = st.sidebar.slider(
-        "Total Air Mass Flow (kg/s)",
-        1.0,
-        150.0,
-        float(defaults["mass_flow_rate"]),
-        step=1.0,
+
+    config["mass_flow_rate"] = float(
+        st.sidebar.slider("Air Mass Flow Rate (kg/s)", 1.0, 40.0, float(defaults["mass_flow_rate"]), step=1.0)
     )
 
-    with st.sidebar.expander("Core", expanded=True):
-        config["pressure_recovery"] = st.slider("Inlet Pressure Recovery", 0.85, 1.0, float(defaults["pressure_recovery"]), step=0.01)
-        config["compressor_pressure_ratio"] = st.slider(
-            "Core Compressor Pressure Ratio",
-            1.0,
-            30.0,
-            float(defaults["compressor_pressure_ratio"]),
-            step=0.5,
+    with st.sidebar.expander("Component Performance", expanded=True):
+        config["pressure_recovery"] = float(
+            st.slider("Inlet Pressure Recovery", 0.85, 1.0, float(defaults["pressure_recovery"]), step=0.01)
         )
-        config["compressor_efficiency"] = st.slider(
-            "Core Compressor Efficiency",
-            0.70,
-            0.98,
-            float(defaults["compressor_efficiency"]),
-            step=0.01,
+        config["compressor_pressure_ratio"] = float(
+            st.slider("Compressor Pressure Ratio", 1.0, 20.0, float(defaults["compressor_pressure_ratio"]), step=0.5)
         )
-        config["turbine_inlet_temperature"] = st.slider(
-            "Turbine Inlet Temperature (K)",
-            900.0,
-            2200.0,
-            float(defaults["turbine_inlet_temperature"]),
-            step=25.0,
+        config["compressor_efficiency"] = float(
+            st.slider("Compressor Efficiency", 0.70, 0.98, float(defaults["compressor_efficiency"]), step=0.01)
         )
-        config["combustor_pressure_loss"] = st.slider(
-            "Combustor Pressure Loss",
-            0.0,
-            0.15,
-            float(defaults["combustor_pressure_loss"]),
-            step=0.005,
+        config["turbine_inlet_temperature"] = float(
+            st.slider("Turbine Inlet Temperature (K)", 900.0, 1800.0, float(defaults["turbine_inlet_temperature"]), step=25.0)
         )
-        config["combustor_efficiency"] = st.slider(
-            "Combustor Efficiency",
-            0.90,
-            1.0,
-            float(defaults["combustor_efficiency"]),
-            step=0.005,
+        config["combustor_pressure_loss"] = float(
+            st.slider("Combustor Pressure Loss", 0.0, 0.12, float(defaults["combustor_pressure_loss"]), step=0.005)
         )
-        config["turbine_efficiency"] = st.slider(
-            "Single-Spool Turbine Efficiency",
-            0.75,
-            0.98,
-            float(defaults["turbine_efficiency"]),
-            step=0.01,
+        config["combustor_efficiency"] = float(
+            st.slider("Combustor Efficiency", 0.90, 1.0, float(defaults["combustor_efficiency"]), step=0.005)
         )
-        config["mechanical_efficiency"] = st.slider(
-            "Single-Spool Mechanical Efficiency",
-            0.80,
-            1.0,
-            float(defaults["mechanical_efficiency"]),
-            step=0.01,
+        config["turbine_efficiency"] = float(
+            st.slider("Turbine Efficiency", 0.75, 0.98, float(defaults["turbine_efficiency"]), step=0.01)
+        )
+        config["mechanical_efficiency"] = float(
+            st.slider("Mechanical Efficiency", 0.85, 1.0, float(defaults["mechanical_efficiency"]), step=0.01)
+        )
+        config["nozzle_efficiency"] = float(
+            st.slider("Nozzle Efficiency", 0.85, 1.0, float(defaults["nozzle_efficiency"]), step=0.01)
         )
 
-    with st.sidebar.expander("Turbofan", expanded=config["architecture"] == "turbofan"):
-        disabled = config["architecture"] != "turbofan"
-        config["bypass_ratio"] = st.slider(
-            "Bypass Ratio",
-            0.0,
-            10.0,
-            float(defaults["bypass_ratio"]),
-            step=0.1,
-            disabled=disabled,
+    with st.sidebar.expander("Gas Properties", expanded=False):
+        config["gas_cp"] = float(
+            st.number_input("cp (J/kg-K)", min_value=500.0, value=float(defaults["gas_cp"]), step=10.0)
         )
-        config["fan_pressure_ratio"] = st.slider(
-            "Fan Pressure Ratio",
-            1.0,
-            2.5,
-            float(defaults["fan_pressure_ratio"]),
-            step=0.05,
-            disabled=disabled,
+        config["gas_gamma"] = float(
+            st.number_input("gamma", min_value=1.05, value=float(defaults["gas_gamma"]), step=0.01)
         )
-        config["fan_efficiency"] = st.slider(
-            "Fan Efficiency",
-            0.75,
-            0.98,
-            float(defaults["fan_efficiency"]),
-            step=0.01,
-            disabled=disabled,
-        )
-        config["bypass_duct_pressure_loss"] = st.slider(
-            "Bypass Duct Pressure Loss",
-            0.0,
-            0.10,
-            float(defaults["bypass_duct_pressure_loss"]),
-            step=0.005,
-            disabled=disabled,
-        )
-        config["hp_turbine_efficiency"] = st.slider(
-            "HP Turbine Efficiency",
-            0.75,
-            0.98,
-            float(defaults["hp_turbine_efficiency"]),
-            step=0.01,
-            disabled=disabled,
-        )
-        config["lp_turbine_efficiency"] = st.slider(
-            "LP Turbine Efficiency",
-            0.75,
-            0.98,
-            float(defaults["lp_turbine_efficiency"]),
-            step=0.01,
-            disabled=disabled,
-        )
-        config["hp_mechanical_efficiency"] = st.slider(
-            "HP Mechanical Efficiency",
-            0.80,
-            1.0,
-            float(defaults["hp_mechanical_efficiency"]),
-            step=0.01,
-            disabled=disabled,
-        )
-        config["lp_mechanical_efficiency"] = st.slider(
-            "LP Mechanical Efficiency",
-            0.80,
-            1.0,
-            float(defaults["lp_mechanical_efficiency"]),
-            step=0.01,
-            disabled=disabled,
+        config["fuel_lower_heating_value"] = float(
+            st.number_input(
+                "Fuel LHV (J/kg)",
+                min_value=1_000_000.0,
+                value=float(defaults["fuel_lower_heating_value"]),
+                step=100_000.0,
+            )
         )
 
-    with st.sidebar.expander("Afterburner", expanded=False):
-        config["afterburner_enabled"] = st.checkbox("Enable Afterburner", value=bool(defaults["afterburner_enabled"]))
-        config["afterburner_exit_temperature"] = st.slider(
-            "Afterburner Exit Temperature (K)",
-            1100.0,
-            2400.0,
-            float(defaults["afterburner_exit_temperature"]),
-            step=25.0,
-            disabled=not config["afterburner_enabled"],
+    compare_mode = st.sidebar.checkbox("Compare Mode", value=False)
+    config["ambient_temperature"] = None
+    config["ambient_pressure"] = None
+    config["verbose"] = False
+    return config, compare_mode
+
+
+def _build_compare_config(base_config: dict) -> dict:
+    defaults = dict(base_config)
+    defaults["compressor_pressure_ratio"] = min(defaults["compressor_pressure_ratio"] + 2.0, 20.0)
+    defaults["turbine_inlet_temperature"] = min(defaults["turbine_inlet_temperature"] + 100.0, 1800.0)
+    defaults["compressor_efficiency"] = max(defaults["compressor_efficiency"] - 0.03, 0.70)
+
+    config = dict(defaults)
+    st.caption("Case A uses the sidebar inputs. Configure Case B below.")
+
+    top = st.columns(4)
+    config["flight_input_mode"] = top[0].radio(
+        "Case B Flight Input",
+        ["speed", "mach"],
+        index=0 if defaults["flight_input_mode"] == "speed" else 1,
+        horizontal=True,
+        key="compare_flight_mode",
+    )
+    config["altitude_m"] = float(
+        top[1].number_input("Case B Altitude (m)", min_value=0.0, value=float(defaults["altitude_m"]), step=250.0)
+    )
+    if config["flight_input_mode"] == "speed":
+        config["flight_speed"] = float(
+            top[2].number_input("Case B Flight Speed (m/s)", min_value=0.0, value=float(defaults["flight_speed"]), step=5.0)
         )
-        config["afterburner_pressure_loss"] = st.slider(
-            "Afterburner Pressure Loss",
-            0.0,
-            0.12,
-            float(defaults["afterburner_pressure_loss"]),
-            step=0.005,
-            disabled=not config["afterburner_enabled"],
+    else:
+        config["flight_mach_number"] = float(
+            top[2].number_input("Case B Flight Mach", min_value=0.0, value=float(defaults["flight_mach_number"]), step=0.02)
         )
-        config["afterburner_efficiency"] = st.slider(
-            "Afterburner Efficiency",
-            0.90,
-            1.0,
-            float(defaults["afterburner_efficiency"]),
-            step=0.005,
-            disabled=not config["afterburner_enabled"],
+    config["mass_flow_rate"] = float(
+        top[3].number_input("Case B Air Mass Flow (kg/s)", min_value=1.0, value=float(defaults["mass_flow_rate"]), step=1.0)
+    )
+
+    with st.expander("Case B Component Performance", expanded=True):
+        row1 = st.columns(3)
+        config["pressure_recovery"] = float(
+            row1[0].number_input("Pressure Recovery", min_value=0.85, max_value=1.0, value=float(defaults["pressure_recovery"]), step=0.01)
+        )
+        config["compressor_pressure_ratio"] = float(
+            row1[1].number_input("Compressor Pressure Ratio", min_value=1.0, max_value=20.0, value=float(defaults["compressor_pressure_ratio"]), step=0.5)
+        )
+        config["compressor_efficiency"] = float(
+            row1[2].number_input("Compressor Efficiency", min_value=0.70, max_value=0.98, value=float(defaults["compressor_efficiency"]), step=0.01)
         )
 
-    with st.sidebar.expander("Nozzles", expanded=False):
-        config["core_nozzle_type"] = st.selectbox(
-            "Core Nozzle Type",
-            ["convergent", "converging-diverging"],
-            index=0 if defaults["core_nozzle_type"] == "convergent" else 1,
+        row2 = st.columns(3)
+        config["turbine_inlet_temperature"] = float(
+            row2[0].number_input("Turbine Inlet Temperature (K)", min_value=900.0, max_value=1800.0, value=float(defaults["turbine_inlet_temperature"]), step=25.0)
         )
-        config["nozzle_efficiency"] = st.slider(
-            "Core Nozzle Efficiency",
-            0.80,
-            1.0,
-            float(defaults["nozzle_efficiency"]),
-            step=0.01,
+        config["combustor_pressure_loss"] = float(
+            row2[1].number_input("Combustor Pressure Loss", min_value=0.0, max_value=0.12, value=float(defaults["combustor_pressure_loss"]), step=0.005)
         )
-        config["core_nozzle_pressure_loss"] = st.slider(
-            "Core Nozzle Pressure Loss",
-            0.0,
-            0.10,
-            float(defaults["core_nozzle_pressure_loss"]),
-            step=0.005,
-        )
-        config["core_nozzle_throat_area"] = _optional_area_input(
-            "Core Throat Area (m^2)",
-            "core_throat",
-            defaults.get("core_nozzle_throat_area"),
-        )
-        config["core_nozzle_exit_area"] = _optional_area_input(
-            "Core Exit Area (m^2)",
-            "core_exit",
-            defaults.get("core_nozzle_exit_area"),
-        )
-        config["bypass_nozzle_type"] = st.selectbox(
-            "Bypass Nozzle Type",
-            ["convergent", "converging-diverging"],
-            index=0 if defaults["bypass_nozzle_type"] == "convergent" else 1,
-            disabled=config["architecture"] != "turbofan",
-        )
-        config["bypass_nozzle_efficiency"] = st.slider(
-            "Bypass Nozzle Efficiency",
-            0.80,
-            1.0,
-            float(defaults["bypass_nozzle_efficiency"]),
-            step=0.01,
-            disabled=config["architecture"] != "turbofan",
-        )
-        config["bypass_nozzle_pressure_loss"] = st.slider(
-            "Bypass Nozzle Pressure Loss",
-            0.0,
-            0.10,
-            float(defaults["bypass_nozzle_pressure_loss"]),
-            step=0.005,
-            disabled=config["architecture"] != "turbofan",
-        )
-        config["bypass_nozzle_throat_area"] = _optional_area_input(
-            "Bypass Throat Area (m^2)",
-            "bypass_throat",
-            defaults.get("bypass_nozzle_throat_area"),
-        )
-        config["bypass_nozzle_exit_area"] = _optional_area_input(
-            "Bypass Exit Area (m^2)",
-            "bypass_exit",
-            defaults.get("bypass_nozzle_exit_area"),
+        config["combustor_efficiency"] = float(
+            row2[2].number_input("Combustor Efficiency", min_value=0.90, max_value=1.0, value=float(defaults["combustor_efficiency"]), step=0.005)
         )
 
-    with st.sidebar.expander("Gas Model", expanded=False):
-        config["gas_temperature_dependent"] = st.checkbox(
-            "Temperature-Dependent cp(T)",
-            value=bool(defaults["gas_temperature_dependent"]),
+        row3 = st.columns(2)
+        config["turbine_efficiency"] = float(
+            row3[0].number_input("Turbine Efficiency", min_value=0.75, max_value=0.98, value=float(defaults["turbine_efficiency"]), step=0.01)
         )
-        config["gas_cp"] = st.number_input("cp_ref (J/kg-K)", value=float(defaults["gas_cp"]), step=5.0)
-        config["gas_gamma"] = st.number_input("gamma_ref", value=float(defaults["gas_gamma"]), step=0.01)
-        config["gas_cp_temperature_slope"] = st.number_input(
-            "cp Slope (J/kg-K^2)",
-            value=float(defaults["gas_cp_temperature_slope"]),
-            step=0.01,
-            format="%.3f",
-            disabled=not config["gas_temperature_dependent"],
+        config["mechanical_efficiency"] = float(
+            row3[1].number_input("Mechanical Efficiency", min_value=0.85, max_value=1.0, value=float(defaults["mechanical_efficiency"]), step=0.01)
         )
-        config["fuel_lower_heating_value"] = st.number_input(
-            "Fuel LHV (J/kg)",
-            value=float(defaults["fuel_lower_heating_value"]),
-            step=500000.0,
-            format="%.0f",
+        config["nozzle_efficiency"] = float(
+            st.number_input("Nozzle Efficiency", min_value=0.85, max_value=1.0, value=float(defaults["nozzle_efficiency"]), step=0.01)
         )
 
-    with st.sidebar.expander("Maps", expanded=False):
-        config["component_maps_enabled"] = st.checkbox(
-            "Enable Simple Component Maps",
-            value=bool(defaults["component_maps_enabled"]),
+    with st.expander("Case B Gas Properties", expanded=False):
+        gas_row = st.columns(3)
+        config["gas_cp"] = float(
+            gas_row[0].number_input("cp (J/kg-K)", min_value=500.0, value=float(defaults["gas_cp"]), step=10.0, key="compare_cp")
         )
-        config["map_sensitivity_pressure_ratio"] = st.slider(
-            "PR Map Sensitivity",
-            0.0,
-            0.25,
-            float(defaults["map_sensitivity_pressure_ratio"]),
-            step=0.01,
-            disabled=not config["component_maps_enabled"],
+        config["gas_gamma"] = float(
+            gas_row[1].number_input("gamma", min_value=1.05, value=float(defaults["gas_gamma"]), step=0.01, key="compare_gamma")
         )
-        config["map_sensitivity_corrected_flow"] = st.slider(
-            "Flow Map Sensitivity",
-            0.0,
-            0.25,
-            float(defaults["map_sensitivity_corrected_flow"]),
-            step=0.01,
-            disabled=not config["component_maps_enabled"],
-        )
-        config["turbine_map_sensitivity_loading"] = st.slider(
-            "Turbine Loading Sensitivity",
-            0.0,
-            0.25,
-            float(defaults["turbine_map_sensitivity_loading"]),
-            step=0.01,
-            disabled=not config["component_maps_enabled"],
+        config["fuel_lower_heating_value"] = float(
+            gas_row[2].number_input(
+                "Fuel LHV (J/kg)",
+                min_value=1_000_000.0,
+                value=float(defaults["fuel_lower_heating_value"]),
+                step=100_000.0,
+                key="compare_lhv",
+            )
         )
 
-    with st.sidebar.expander("Section Velocities", expanded=False):
-        config["diffuser_exit_velocity"] = st.slider("Diffuser Exit Velocity (m/s)", 20.0, 220.0, float(defaults["diffuser_exit_velocity"]), step=5.0)
-        config["fan_exit_velocity"] = st.slider("Fan Exit Velocity (m/s)", 40.0, 260.0, float(defaults["fan_exit_velocity"]), step=5.0)
-        config["compressor_exit_velocity"] = st.slider("Core Compressor Exit Velocity (m/s)", 40.0, 260.0, float(defaults["compressor_exit_velocity"]), step=5.0)
-        config["combustor_exit_velocity"] = st.slider("Combustor Exit Velocity (m/s)", 20.0, 180.0, float(defaults["combustor_exit_velocity"]), step=5.0)
-        config["turbine_exit_velocity"] = st.slider("Turbine Exit Velocity (m/s)", 40.0, 280.0, float(defaults["turbine_exit_velocity"]), step=5.0)
-        config["afterburner_exit_velocity"] = st.slider("Afterburner Exit Velocity (m/s)", 80.0, 320.0, float(defaults["afterburner_exit_velocity"]), step=5.0)
-
+    config["ambient_temperature"] = None
+    config["ambient_pressure"] = None
     config["verbose"] = False
     return config
 
 
-def _figures_for_result(result):
-    return {
-        "T-s Diagram": plot_TS(result, show=False, persist=False),
-        "P-v Diagram": plot_PV(result, show=False, persist=False),
-        "T-P Diagram": plot_TP(result, show=False, persist=False),
-        "Performance": plot_performance(result, show=False, persist=False),
-        "Engine Flow Actual": plot_engine_flow(result, ideal=False, show=False, persist=False),
-        "Engine Flow Theoretical": plot_engine_flow(result, ideal=True, show=False, persist=False),
-    }
+def _summary_table(summary: dict) -> pd.DataFrame:
+    rows = [{"Metric": key, "Value": summary[key]} for key in SUMMARY_KEYS if key in summary]
+    return pd.DataFrame(rows)
 
 
-def _warning_panel(summary):
-    if not summary["warnings"]:
-        return
-    with st.expander("Warnings", expanded=True):
-        for warning in summary["warnings"]:
-            st.warning(warning)
-        if not summary["feasible"]:
-            st.info("Infeasible means the requested mass flow, work balance, and nozzle geometry cannot all be satisfied at the same time in the current 1D model.")
+def _course_notes(summary: dict) -> list[str]:
+    notes = []
+    if summary["bwr"] > 0.55:
+        notes.append("Back work ratio is relatively high, so much of the turbine work is spent driving the compressor.")
+    else:
+        notes.append("Back work ratio is moderate, so the compressor does not dominate the cycle work balance.")
+
+    if summary["thermal_efficiency"] > 0.35:
+        notes.append("Thermal efficiency is comparatively strong for a basic Brayton-cycle calculation.")
+    else:
+        notes.append("Thermal efficiency is modest, which is common at lower pressure ratios or weaker component efficiencies.")
+
+    if summary["nozzle_choked"]:
+        notes.append("The nozzle is choked, so the exit reaches sonic conditions and pressure thrust contributes to net thrust.")
+    else:
+        notes.append("The nozzle is not choked, so the exit pressure relaxes directly toward ambient.")
+    return notes
 
 
-def _compare_case(primary_config):
-    st.subheader("Reference Comparison")
-    compare_preset = st.selectbox("Compare Against", list_presets(), index=0, key="compare_preset")
-    compare_config = get_preset_config(compare_preset)
-    for key in ("altitude_m", "flight_input_mode", "flight_speed", "flight_mach_number"):
-        compare_config[key] = primary_config.get(key)
-    compare_config["verbose"] = False
-    compare_result = run_engine_case(compare_config)
-    compare_summary = summarize_result(compare_result, V0=compare_result.config["flight_speed"])
-    return compare_result, compare_summary
-
-
-def _station_column_view(station_df: pd.DataFrame, mode: str) -> pd.DataFrame:
-    if mode == "Actual Focus":
-        return station_df[
-            [
-                "stage_name",
-                "stage_index",
-                "actual_static_temperature_K",
-                "actual_total_temperature_K",
-                "actual_static_pressure_kPa",
-                "actual_total_pressure_kPa",
-                "actual_velocity_mps",
-                "actual_mach",
-                "actual_area_m2",
-                "core_air_mass_flow_kg_s",
-                "bypass_air_mass_flow_kg_s",
-                "fuel_air_ratio",
-                "infeasible",
-                "status_message",
-            ]
-        ]
-    if mode == "Theoretical Focus":
-        return station_df[
-            [
-                "stage_name",
-                "stage_index",
-                "ideal_static_temperature_K",
-                "ideal_total_temperature_K",
-                "ideal_static_pressure_kPa",
-                "ideal_total_pressure_kPa",
-                "ideal_velocity_mps",
-                "ideal_mach",
-                "ideal_area_m2",
-                "fuel_air_ratio",
-                "infeasible",
-                "status_message",
-            ]
-        ]
-    return station_df
-
-
-def _comparison_table(primary_summary, secondary_summary):
-    metrics = [
-        "thrust_N",
-        "specific_thrust_N_per_kg_s",
-        "tsfc_kg_per_N_s",
-        "specific_impulse_s",
-        "overall_efficiency",
-        "fuel_flow_kg_s",
-        "core_thrust_N",
-        "bypass_thrust_N",
-    ]
+def _comparison_table(case_a: dict, case_b: dict) -> pd.DataFrame:
     rows = []
-    for metric in metrics:
-        primary = primary_summary.get(metric, 0.0)
-        secondary = secondary_summary.get(metric, 0.0)
+    for key in COMPARISON_KEYS:
+        value_a = case_a.get(key)
+        value_b = case_b.get(key)
+        delta = value_b - value_a if isinstance(value_a, (int, float)) and isinstance(value_b, (int, float)) else "n/a"
+        percent_delta = (
+            100.0 * delta / value_a
+            if isinstance(delta, (int, float)) and isinstance(value_a, (int, float)) and abs(value_a) > 1e-12
+            else "n/a"
+        )
         rows.append(
             {
-                "metric": metric,
-                "current": primary,
-                "reference": secondary,
-                "delta": primary - secondary,
+                "metric": key,
+                "case_a": value_a,
+                "case_b": value_b,
+                "delta_b_minus_a": delta,
+                "percent_delta": percent_delta,
             }
         )
     return pd.DataFrame(rows)
 
 
-def _build_sweep(parameter_name: str, config: dict, value_min: float, value_max: float, count: int):
-    if count < 2 or value_min >= value_max:
-        return pd.DataFrame()
-    values = [value_min + i * (value_max - value_min) / (count - 1) for i in range(count)]
-    if parameter_name == "flight_mach_number":
-        sweep_config = dict(config)
-        sweep_config["flight_input_mode"] = "mach"
-        return sweep_parameter(sweep_config, parameter_name, values)
-    return sweep_parameter(config, parameter_name, values)
-
-
-def _sweep_plot(sweep_df: pd.DataFrame, parameter_name: str):
+def _sweep_plot(sweep_df: pd.DataFrame, parameter: str) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
-            x=sweep_df[parameter_name],
+            x=sweep_df[parameter],
             y=sweep_df["thrust_N"],
             mode="lines+markers",
             name="Thrust (N)",
@@ -495,273 +333,292 @@ def _sweep_plot(sweep_df: pd.DataFrame, parameter_name: str):
     )
     fig.add_trace(
         go.Scatter(
-            x=sweep_df[parameter_name],
-            y=sweep_df["tsfc_kg_per_N_s"],
+            x=sweep_df[parameter],
+            y=sweep_df["overall_efficiency"],
             mode="lines+markers",
-            name="TSFC",
-            line={"color": "#C44536", "width": 3, "dash": "dash"},
+            name="Overall Efficiency",
+            line={"color": "#C44536", "width": 3},
             yaxis="y2",
         )
     )
     fig.update_layout(
         template="plotly_white",
+        title={"text": f"Parameter Sweep: {parameter}", "x": 0.04},
         paper_bgcolor="#F6F8FB",
         plot_bgcolor="#FFFFFF",
-        title={"text": f"Parameter Sweep: {parameter_name}", "x": 0.04},
-        margin={"l": 60, "r": 60, "t": 70, "b": 50},
-        xaxis={"title": parameter_name},
-        yaxis={"title": "Thrust (N)", "gridcolor": "#D9E2EC"},
-        yaxis2={"title": "TSFC (kg/N-s)", "overlaying": "y", "side": "right", "showgrid": False},
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1.0},
+        font={"family": "Arial", "size": 13, "color": "#102A43"},
+        margin={"l": 72, "r": 72, "t": 72, "b": 62},
+        yaxis={"title": "Thrust (N)"},
+        yaxis2={"title": "Overall Efficiency", "overlaying": "y", "side": "right"},
+        legend={"orientation": "h", "y": 1.02, "x": 1.0, "xanchor": "right"},
     )
+    fig.update_xaxes(title=parameter, gridcolor="#D9E2EC")
     return fig
 
 
-def _download_buttons(figures, station_df, component_df, summary, config, assumptions, equations):
-    report_html = build_html_report(
-        summary,
-        {
-            "station_csv": Path("station_summary.csv"),
-            "component_csv": Path("component_summary.csv"),
-            "summary_json": Path("summary_metrics.json"),
-            "config_json": Path("config_snapshot.json"),
-        },
-        config=config,
-        assumptions=assumptions,
-        equations=equations,
-    ).encode("utf-8")
+def _render_sweep_docs(current_config: dict, parameter: str, start_value: float, end_value: float, count: int) -> None:
+    with st.expander("How To Use The Sweep Tab", expanded=False):
+        st.markdown(
+            "Use this tab for a one-at-a-time parameter study. The app generates a set of evenly spaced values "
+            "between your selected `Start` and `End`, then solves the full Brayton cycle separately at each point."
+        )
+        st.markdown("**Recommended workflow**")
+        st.markdown(
+            "1. Set up your baseline case in the sidebar.\n"
+            "2. Choose one variable to study in the Sweep tab.\n"
+            "3. Enter a physically reasonable start, end, and number of points.\n"
+            "4. Read the plot as a trend study, not as a single design point."
+        )
 
-    left, right = st.columns(2)
-    with left:
-        st.download_button(
-            "Download Config JSON",
-            json.dumps(config, indent=2).encode("utf-8"),
-            file_name="engine_config.json",
-            mime="application/json",
-            width="stretch",
+        st.markdown("**Calculation Basis**")
+        st.write(
+            "For each sweep value, the solver keeps all other current inputs fixed and reruns the full cycle model. "
+            "This is not interpolation and it is not a curve fit. Every point is an independent thermodynamic solution."
         )
-        st.download_button(
-            "Download Station CSV",
-            station_df.to_csv(index=False).encode("utf-8"),
-            file_name="station_summary.csv",
-            mime="text/csv",
-            width="stretch",
+        st.latex(r"x_i = x_{\min} + \frac{i}{N-1}(x_{\max} - x_{\min}), \quad i = 0,1,\dots,N-1")
+        st.latex(
+            r"\text{Case}_i = \text{run\_engine\_case}\left(\text{baseline config with } "
+            + SWEEP_LABELS[parameter].replace(" ", r"\ ")
+            + r" = x_i\right)"
         )
-        st.download_button(
-            "Download Component CSV",
-            component_df.to_csv(index=False).encode("utf-8"),
-            file_name="component_summary.csv",
-            mime="text/csv",
-            width="stretch",
+        st.latex(r"F_i = \dot{m}_a[(1+f_i)V_{e,i} - V_0] + (P_{e,i} - P_0)A_{e,i}")
+        st.latex(r"\eta_{o,i} = \frac{F_i V_0}{\dot{m}_a q_{in,i}}")
+
+        st.markdown("**What the plot shows**")
+        st.markdown(
+            "- The blue curve is thrust for each solved case.\n"
+            "- The red curve is overall efficiency for each solved case.\n"
+            "- The table below the chart contains the exact solved values for every point."
         )
-        st.download_button(
-            "Download Summary JSON",
-            json.dumps(summary, indent=2).encode("utf-8"),
-            file_name="summary_metrics.json",
-            mime="application/json",
-            width="stretch",
+
+        st.markdown("**Important assumptions**")
+        st.markdown(
+            "- Only one variable is changed at a time.\n"
+            "- The Brayton-cycle model uses constant gas properties and the current sidebar settings for all non-swept inputs.\n"
+            "- If you sweep altitude, the ambient temperature and pressure are recalculated from the ISA atmosphere model at each altitude."
         )
-    with right:
-        st.download_button(
-            "Download HTML Report",
-            report_html,
-            file_name="report.html",
-            mime="text/html",
-            width="stretch",
-        )
-        figure_name = st.selectbox("Figure Export", list(figures.keys()))
-        selected_figure = figures[figure_name]
-        st.download_button(
-            "Download Figure HTML",
-            figure_to_html_bytes(selected_figure),
-            file_name=f"{figure_name.lower().replace(' ', '_')}.html",
-            mime="text/html",
-            width="stretch",
-        )
-        png_bytes = figure_to_png_bytes(selected_figure)
-        if png_bytes is not None:
-            st.download_button(
-                "Download Figure PNG",
-                png_bytes,
-                file_name=f"{figure_name.lower().replace(' ', '_')}.png",
-                mime="image/png",
-                width="stretch",
+        if parameter == "flight_speed":
+            st.info(
+                "Flight-speed sweep points are solved in direct speed mode. This avoids Mach-mode preprocessing from overwriting the sampled speed values."
             )
-        else:
-            st.info("PNG export needs Plotly's Kaleido backend.")
+
+        st.caption(
+            f"Current sweep setup: {SWEEP_LABELS[parameter]} from {start_value:.4g} to {end_value:.4g} using {count} points."
+        )
+
+
+def _figure_pack(result):
+    return {
+        "T-s Diagram": plot_TS(result, show=False, persist=False),
+        "P-v Diagram": plot_PV(result, show=False, persist=False),
+        "T-P Diagram": plot_TP(result, show=False, persist=False),
+        "Performance": plot_performance(result, show=False, persist=False),
+        "Actual Schematic": plot_engine_flow(result, ideal=False, show=False, persist=False),
+        "Theoretical Schematic": plot_engine_flow(result, ideal=True, show=False, persist=False),
+    }
+
+
+def _render_metric_equations():
+    with st.expander("Metric Equations", expanded=False):
+        for label, equation in METRIC_LATEX.items():
+            st.markdown(f"**{label}**")
+            st.latex(equation)
 
 
 def main():
-    st.set_page_config(page_title="Jet Engine Brayton Simulator", layout="wide")
-    st.markdown(
-        """
-        <style>
-        .block-container {padding-top: 1.4rem; padding-bottom: 1.2rem;}
-        .hero {
-            padding: 1.2rem 1.4rem;
-            border-radius: 16px;
-            background: linear-gradient(120deg, #102A43 0%, #0F6CBD 55%, #A3C4DC 100%);
-            color: #F6F8FB;
-            margin-bottom: 1rem;
-        }
-        .hero p {margin: 0.35rem 0 0 0; color: rgba(246,248,251,0.88);}
-        </style>
-        <div class="hero">
-            <h2 style="margin:0;">Jet Engine Brayton Cycle Analysis</h2>
-            <p>Turbojet and turbofan cycle simulator with simple off-design maps, optional afterburning, dual-stream nozzles, compare mode, and exportable reports.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    st.set_page_config(
+        page_title="Brayton Cycle Simulator",
+        page_icon=":material/functions:",
+        layout="wide",
     )
 
-    config = _build_sidebar_config()
-    try:
-        result = run_engine_case(config)
-    except Exception as exc:
-        st.error(str(exc))
-        st.stop()
-
+    config, compare_mode = _build_sidebar_config()
+    result = run_engine_case(config)
     summary = summarize_result(result, V0=result.config["flight_speed"])
-    station_df = result.to_dataframe()
-    component_df = result.to_component_dataframe()
-    figures = _figures_for_result(result)
-    compare_mode = st.sidebar.toggle("Compare Mode", value=True)
+    figures = _figure_pack(result)
 
-    if not summary["feasible"]:
-        st.error("This operating point is thermodynamically infeasible in the current 1D model.")
-    _warning_panel(summary)
+    st.title("Brayton Cycle Simulator")
+    st.caption("Interactive thermodynamic analysis of a turbojet Brayton cycle.")
 
-    metrics = st.columns(8)
-    with metrics[0]:
-        _metric_card("Thrust", f"{summary['thrust_N']:.1f} N")
-    with metrics[1]:
-        _metric_card("Core / Bypass", f"{summary['core_thrust_N']:.0f} / {summary['bypass_thrust_N']:.0f} N")
-    with metrics[2]:
-        _metric_card("TSFC", f"{summary['tsfc_kg_per_N_s']:.6f}")
-    with metrics[3]:
-        _metric_card("Isp", f"{summary['specific_impulse_s']:.1f} s")
-    with metrics[4]:
-        _metric_card("Fuel Flow", f"{summary['fuel_flow_kg_s']:.3f} kg/s")
-    with metrics[5]:
-        _metric_card("Overall Eff.", f"{summary['overall_efficiency']:.3f}")
-    with metrics[6]:
-        _metric_card("Flight", f"{result.config['flight_speed']:.0f} m/s")
-    with metrics[7]:
-        _metric_card("Architecture", summary["architecture"])
+    if summary["warnings"]:
+        for warning in summary["warnings"]:
+            st.warning(warning)
 
-    tabs = st.tabs(["Cycle Plots", "Engine View", "Sweeps", "Operating Map", "Stations", "Compare", "Report", "Exports"])
+    tabs = st.tabs(["Overview", "Diagrams", "Tables", "Sweep", "Compare", "Report"])
 
     with tabs[0]:
-        left, right = st.columns(2)
-        left.plotly_chart(figures["T-s Diagram"], width="stretch", key="primary_ts")
-        right.plotly_chart(figures["P-v Diagram"], width="stretch", key="primary_pv")
-        left, right = st.columns(2)
-        left.plotly_chart(figures["T-P Diagram"], width="stretch", key="primary_tp")
-        right.plotly_chart(figures["Performance"], width="stretch", key="primary_performance")
+        row = st.columns(5)
+        row[0].metric("Thrust", f"{summary['thrust_N']:.1f} N", help=METRIC_HELP["thrust"])
+        row[1].metric(
+            "Thermal Efficiency",
+            f"{summary['thermal_efficiency']:.3f}",
+            help=METRIC_HELP["thermal"],
+        )
+        row[2].metric(
+            "Overall Efficiency",
+            f"{summary['overall_efficiency']:.3f}",
+            help=METRIC_HELP["overall"],
+        )
+        row[3].metric(
+            "Specific Impulse",
+            f"{summary['specific_impulse_s']:.1f} s",
+            help=METRIC_HELP["isp"],
+        )
+        row[4].metric(
+            "Fuel-Air Ratio",
+            f"{summary['fuel_air_ratio']:.5f}",
+            help=METRIC_HELP["fuel_air"],
+        )
+
+        st.subheader("Interpretation")
+        for note in _course_notes(summary):
+            st.write(f"- {note}")
+
+        _render_metric_equations()
+
+        st.subheader("Key Results")
+        st.dataframe(_summary_table(summary), width="stretch", hide_index=True)
+
+        with st.expander("Model Assumptions", expanded=False):
+            for item in result.assumptions:
+                st.write(f"- {item}")
 
     with tabs[1]:
-        branch = st.radio("Schematic Branch", ["Actual", "Theoretical"], horizontal=True)
-        key = "Engine Flow Theoretical" if branch == "Theoretical" else "Engine Flow Actual"
-        st.plotly_chart(figures[key], width="stretch", key=f"engine_view_{branch.lower()}")
-        st.dataframe(
-            pd.DataFrame(
-                [
-                    {"metric": "Bypass Exit Velocity (m/s)", "value": summary["bypass_exit_velocity_mps"]},
-                    {"metric": "Bypass Exit Mach", "value": summary["bypass_exit_mach"]},
-                    {"metric": "Inlet Capture Diameter (m)", "value": summary["inlet_capture_diameter_m"]},
-                    {"metric": "Core Nozzle Diameter (m)", "value": summary["core_nozzle_diameter_m"]},
-                    {"metric": "Bypass Nozzle Diameter (m)", "value": summary["bypass_nozzle_diameter_m"]},
-                ]
-            ),
-            width="stretch",
-            hide_index=True,
-        )
+        left, right = st.columns(2)
+        left.plotly_chart(figures["T-s Diagram"], width="stretch", key="brayton_ts")
+        right.plotly_chart(figures["P-v Diagram"], width="stretch", key="brayton_pv")
+        left, right = st.columns(2)
+        left.plotly_chart(figures["T-P Diagram"], width="stretch", key="brayton_tp")
+        right.plotly_chart(figures["Performance"], width="stretch", key="brayton_perf")
+
+        schematic_mode = st.radio("Schematic View", ["Actual", "Theoretical"], horizontal=True)
+        schematic_key = "Actual Schematic" if schematic_mode == "Actual" else "Theoretical Schematic"
+        st.plotly_chart(figures[schematic_key], width="stretch", key=f"schematic_{schematic_mode.lower()}")
 
     with tabs[2]:
-        parameter = st.selectbox(
-            "Sweep Parameter",
-            [
-                "compressor_pressure_ratio",
-                "turbine_inlet_temperature",
-                "afterburner_exit_temperature",
-                "flight_speed",
-                "flight_mach_number",
-                "mass_flow_rate",
-            ],
-        )
-        sweep_cols = st.columns(3)
-        sweep_min = sweep_cols[0].number_input("Min", value=4.0 if "pressure_ratio" in parameter else 0.2)
-        sweep_max = sweep_cols[1].number_input("Max", value=20.0 if "pressure_ratio" in parameter else 2.0)
-        sweep_count = sweep_cols[2].slider("Points", 4, 20, 8)
-        sweep_df = _build_sweep(parameter, config, float(sweep_min), float(sweep_max), int(sweep_count))
-        if sweep_df.empty:
-            st.warning("Sweep bounds are invalid.")
-        else:
-            st.plotly_chart(_sweep_plot(sweep_df, parameter), width="stretch", key=f"sweep_{parameter}")
-            st.dataframe(sweep_df.round(6), width="stretch", hide_index=True)
+        st.subheader("Station Table")
+        st.dataframe(result.to_dataframe().round(6), width="stretch", hide_index=True)
+        st.subheader("Component Table")
+        st.dataframe(result.to_component_dataframe().round(6), width="stretch", hide_index=True)
 
     with tabs[3]:
-        controls = st.columns(6)
-        altitude_min = controls[0].slider("Alt Min (m)", 0, 12000, 0, step=500)
-        altitude_max = controls[1].slider("Alt Max (m)", 2000, 16000, 12000, step=500)
-        altitude_points = controls[2].slider("Alt Points", 3, 8, 5)
-        map_mode = controls[3].selectbox("Map Input", ["speed", "mach"])
-        speed_min = controls[4].slider("Input Min", 0, 300, 50, step=10)
-        speed_max = controls[5].slider("Input Max", 100, 450, 300, step=10)
-        points = st.slider("Input Points", 3, 8, 5)
-        metric = st.selectbox(
-            "Map Metric",
-            ["thrust_N", "overall_efficiency", "specific_thrust_N_per_kg_s", "tsfc_kg_per_N_s"],
+        option_label = st.selectbox(
+            "Sweep Parameter",
+            list(SWEEP_OPTIONS.keys()),
+            help="Choose one variable to vary while all other current inputs stay fixed.",
         )
-        if altitude_min >= altitude_max or speed_min >= speed_max:
-            st.warning("Minimum values must be smaller than maximum values.")
-        else:
-            altitudes = [altitude_min + i * (altitude_max - altitude_min) / (altitude_points - 1) for i in range(altitude_points)]
-            values = [speed_min + i * (speed_max - speed_min) / (points - 1) for i in range(points)]
-            envelope_df = sweep_flight_envelope(config, altitudes, values, input_mode=map_mode)
-            operating_map = plot_operating_map(envelope_df, metric=metric, show=False, persist=False)
-            st.plotly_chart(operating_map, width="stretch", key=f"operating_map_{map_mode}_{metric}")
-            st.dataframe(envelope_df.round(6), width="stretch", hide_index=True)
+        parameter = SWEEP_OPTIONS[option_label]
+        default_ranges = {
+            "compressor_pressure_ratio": (2.0, 16.0),
+            "turbine_inlet_temperature": (1100.0, 1700.0),
+            "compressor_efficiency": (0.72, 0.95),
+            "turbine_efficiency": (0.78, 0.96),
+            "flight_speed": (50.0, 320.0),
+            "altitude_m": (0.0, 12000.0),
+        }
+        start_default, end_default = default_ranges[parameter]
+        col1, col2, col3 = st.columns(3)
+        start_value = float(
+            col1.number_input("Start", value=float(start_default), help="Lower bound of the sweep range.")
+        )
+        end_value = float(
+            col2.number_input("End", value=float(end_default), help="Upper bound of the sweep range.")
+        )
+        count = int(
+            col3.number_input(
+                "Points",
+                min_value=2,
+                max_value=25,
+                value=7,
+                step=1,
+                help="Number of evenly spaced cases to solve between Start and End.",
+            )
+        )
+        _render_sweep_docs(config, parameter, start_value, end_value, count)
+        values = _linspace(start_value, end_value, count)
+        sweep_df = sweep_parameter(config, parameter, values)
+        st.plotly_chart(_sweep_plot(sweep_df, parameter), width="stretch", key=f"sweep_{parameter}")
+        st.dataframe(sweep_df.round(6), width="stretch", hide_index=True)
 
     with tabs[4]:
-        table_mode = st.radio("Table View", ["Combined", "Actual Focus", "Theoretical Focus", "Component Deltas"], horizontal=True)
-        if table_mode == "Component Deltas":
-            st.dataframe(component_df.round(6), width="stretch", hide_index=True)
-        else:
-            st.dataframe(_station_column_view(station_df.round(6), table_mode), width="stretch", hide_index=True)
-
-    with tabs[5]:
         if compare_mode:
-            compare_result, compare_summary = _compare_case(config)
-            st.dataframe(_comparison_table(summary, compare_summary).round(6), width="stretch", hide_index=True)
-            compare_cols = st.columns(2)
-            compare_cols[0].plotly_chart(
-                plot_TS(compare_result, show=False, persist=False),
+            compare_config = _build_compare_config(config)
+            compare_result = run_engine_case(compare_config)
+            compare_summary = summarize_result(compare_result, V0=compare_result.config["flight_speed"])
+
+            metric_cols = st.columns(3)
+            metric_cols[0].metric("Case A Thrust", f"{summary['thrust_N']:.1f} N")
+            metric_cols[1].metric("Case B Thrust", f"{compare_summary['thrust_N']:.1f} N")
+            metric_cols[2].metric("Delta", f"{compare_summary['thrust_N'] - summary['thrust_N']:.1f} N")
+
+            st.dataframe(
+                _comparison_table(summary, compare_summary).round(6),
                 width="stretch",
-                key="compare_ts",
+                hide_index=True,
             )
-            compare_cols[1].plotly_chart(
+
+            top = st.columns(2)
+            top[0].markdown("**Case A: T-s Diagram**")
+            top[0].plotly_chart(plot_TS(result, show=False, persist=False), width="stretch", key="compare_a_ts")
+            top[1].markdown("**Case B: T-s Diagram**")
+            top[1].plotly_chart(plot_TS(compare_result, show=False, persist=False), width="stretch", key="compare_b_ts")
+
+            middle = st.columns(2)
+            middle[0].markdown("**Case A: P-v Diagram**")
+            middle[0].plotly_chart(plot_PV(result, show=False, persist=False), width="stretch", key="compare_a_pv")
+            middle[1].markdown("**Case B: P-v Diagram**")
+            middle[1].plotly_chart(plot_PV(compare_result, show=False, persist=False), width="stretch", key="compare_b_pv")
+
+            bottom = st.columns(2)
+            bottom[0].markdown("**Case A: Engine Schematic**")
+            bottom[0].plotly_chart(
+                plot_engine_flow(result, show=False, persist=False),
+                width="stretch",
+                key="compare_a_flow",
+            )
+            bottom[1].markdown("**Case B: Engine Schematic**")
+            bottom[1].plotly_chart(
                 plot_engine_flow(compare_result, show=False, persist=False),
                 width="stretch",
-                key="compare_engine_flow",
+                key="compare_b_flow",
             )
         else:
-            st.info("Enable Compare Mode in the sidebar to compare the current case against a preset reference.")
+            st.info("Enable Compare Mode in the sidebar to compare the current case against a second input set.")
 
-    with tabs[6]:
-        st.subheader("Assumptions")
-        for item in result.assumptions:
-            st.write(f"- {item}")
-        st.subheader("Key Relations")
-        for item in result.equations:
-            st.write(f"- {item}")
-        with st.expander("Configuration Snapshot"):
-            st.json(result.config)
-        with st.expander("Summary Snapshot"):
-            st.json(summary)
-
-    with tabs[7]:
-        _download_buttons(figures, station_df.round(6), component_df.round(6), summary, result.config, result.assumptions, result.equations)
+    with tabs[5]:
+        report_html = build_html_report(
+            summary,
+            {},
+            config=result.config,
+            assumptions=result.assumptions,
+            equations=result.equations,
+        )
+        st.download_button(
+            "Download HTML Report",
+            data=report_html.encode("utf-8"),
+            file_name="brayton_cycle_report.html",
+            mime="text/html",
+        )
+        st.download_button(
+            "Download Station Table",
+            data=result.to_dataframe().to_csv(index=False).encode("utf-8"),
+            file_name="station_summary.csv",
+            mime="text/csv",
+        )
+        st.download_button(
+            "Download Component Table",
+            data=result.to_component_dataframe().to_csv(index=False).encode("utf-8"),
+            file_name="component_summary.csv",
+            mime="text/csv",
+        )
+        st.download_button(
+            "Download T-s Diagram HTML",
+            data=figure_to_html_bytes(figures["T-s Diagram"]),
+            file_name="ts_diagram.html",
+            mime="text/html",
+        )
+        st.markdown("Preview")
+        st.components.v1.html(report_html, height=640, scrolling=True)
 
 
 if __name__ == "__main__":

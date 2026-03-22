@@ -42,6 +42,8 @@ def export_result_tables(result, summary, output_dir="outputs"):
 
 
 def _list_items(items):
+    if not items:
+        return "<li>None</li>"
     return "\n".join(f"<li>{item}</li>" for item in items)
 
 
@@ -49,32 +51,37 @@ def _table_rows(mapping):
     return "\n".join(f"<tr><td>{key}</td><td>{_display_value(value)}</td></tr>" for key, value in mapping.items())
 
 
+def _equation_blocks(equations):
+    if not equations:
+        return "<p>No equations provided.</p>"
+    return "\n".join(f"<div class=\"equation\">$$ {equation} $$</div>" for equation in equations)
+
+
 def build_html_report(summary, table_exports, config=None, assumptions=None, equations=None):
     metric_rows = _table_rows(summary)
     config_rows = _table_rows(config or {})
-    export_rows = "\n".join(f"<li><a href=\"{path.name}\">{label}</a></li>" for label, path in table_exports.items())
     assumptions_html = _list_items(assumptions or [])
-    equations_html = _list_items(equations or [])
+    equations_html = _equation_blocks(equations or [])
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Jet Engine Cycle Report</title>
+  <title>Brayton Cycle Report</title>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
   <style>
     body {{ font-family: Arial, sans-serif; margin: 2rem; background: #F6F8FB; color: #102A43; }}
     h1 {{ margin-bottom: 0.4rem; }}
-    h2 {{ margin-top: 0; }}
-    table {{ border-collapse: collapse; width: 100%; max-width: 820px; background: #FFFFFF; }}
+    table {{ border-collapse: collapse; width: 100%; max-width: 860px; background: #FFFFFF; }}
     th, td {{ border: 1px solid #D9E2EC; padding: 0.65rem 0.8rem; text-align: left; vertical-align: top; }}
     th {{ background: #E8EFF6; }}
     .card {{ background: #FFFFFF; border-radius: 14px; padding: 1.2rem 1.4rem; margin-top: 1rem; box-shadow: 0 2px 10px rgba(16,42,67,0.08); }}
-    a {{ color: #0F6CBD; }}
+    .equation {{ background: #EEF3F8; border-radius: 10px; padding: 0.8rem 1rem; margin: 0.7rem 0; overflow-x: auto; }}
     code {{ background: #EEF3F8; padding: 0.12rem 0.3rem; border-radius: 4px; }}
   </style>
 </head>
 <body>
-  <h1>Jet Engine Brayton Cycle Report</h1>
-  <p>Generated from the current engine configuration.</p>
+  <h1>Brayton Cycle Report</h1>
+  <p>Cycle-level thermodynamic results for the current case.</p>
   <div class="card">
     <h2>Summary Metrics</h2>
     <table>
@@ -95,11 +102,7 @@ def build_html_report(summary, table_exports, config=None, assumptions=None, equ
   </div>
   <div class="card">
     <h2>Key Relations</h2>
-    <ul>{equations_html}</ul>
-  </div>
-  <div class="card">
-    <h2>Exported Tables</h2>
-    <ul>{export_rows}</ul>
+    {equations_html}
   </div>
 </body>
 </html>
