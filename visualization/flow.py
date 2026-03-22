@@ -8,11 +8,16 @@ import plotly.graph_objects as go
 
 SECTION_LAYOUT = {
     "Inlet": {"length": 1.25, "kind": "diffuser"},
+    "Fan": {"length": 1.20, "kind": "compressor"},
     "Compressor": {"length": 1.45, "kind": "compressor"},
+    "HP Compressor": {"length": 1.45, "kind": "compressor"},
     "Combustor": {"length": 1.35, "kind": "combustor"},
     "Turbine": {"length": 1.25, "kind": "turbine"},
+    "HP Turbine": {"length": 1.15, "kind": "turbine"},
+    "LP Turbine": {"length": 1.15, "kind": "turbine"},
     "Afterburner": {"length": 1.20, "kind": "afterburner"},
     "Nozzle": {"length": 1.55, "kind": "nozzle"},
+    "Core Nozzle": {"length": 1.55, "kind": "nozzle"},
 }
 DEFAULT_SECTION = {"length": 1.20, "kind": "duct"}
 HEAT_COLORSCALE = [
@@ -335,7 +340,57 @@ def _annotations(sections, velocities, ideal=False):
     return annotations
 
 
+def _bypass_overlay(result, sections, ideal=False):
+    extras = getattr(result, "extras", {})
+    bypass = extras.get("bypass", {})
+    if ideal or extras.get("architecture") != "turbofan" or not sections or bypass.get("exit_area_m2", 0.0) <= 0.0:
+        return [], []
+
+    fan_section = next((section for section in sections if section["name"] == "Fan"), sections[0])
+    x_start = fan_section["x1"]
+    x_end = sections[-1]["x1"]
+    max_height = max(max(section["h0"], section["h1"]) for section in sections)
+    y_bypass = max_height + 0.9
+
+    traces = [
+        go.Scatter(
+            x=[fan_section["x0"], x_start, x_end],
+            y=[fan_section["h0"], y_bypass, y_bypass],
+            mode="lines",
+            line={"color": "#7B8794", "width": 2, "dash": "dash"},
+            hoverinfo="skip",
+            showlegend=False,
+        ),
+        go.Scatter(
+            x=[x_end, x_end],
+            y=[y_bypass, 0.45 * max_height],
+            mode="lines",
+            line={"color": "#7B8794", "width": 2, "dash": "dash"},
+            hoverinfo="skip",
+            showlegend=False,
+        ),
+    ]
+    annotations = [
+        {
+            "x": 0.5 * (x_start + x_end),
+            "y": y_bypass + 0.15,
+            "xref": "x",
+            "yref": "y",
+            "showarrow": False,
+            "font": {"size": 10, "color": "#486581"},
+            "text": (
+                f"<b>Bypass Stream</b><br>"
+                f"V = {bypass.get('exit_velocity_mps', 0.0):.0f} m/s, "
+                f"M = {bypass.get('exit_mach', 0.0):.2f}<br>"
+                f"A = {bypass.get('exit_area_m2', 0.0):.3f} m^2"
+            ),
+        }
+    ]
+    return traces, annotations
+
+
 def plot_engine_flow(states, ideal=False, show=True, persist=True):
+    result = states if hasattr(states, "states") else None
     sections = _build_sections(states, ideal=ideal)
     if not sections:
         raise ValueError("At least one processed engine section is required.")
@@ -381,6 +436,9 @@ def plot_engine_flow(states, ideal=False, show=True, persist=True):
         fig.add_trace(trace)
     for trace in _pattern_traces(sections):
         fig.add_trace(trace)
+    bypass_traces, bypass_annotations = _bypass_overlay(result, sections, ideal=ideal)
+    for trace in bypass_traces:
+        fig.add_trace(trace)
 
     fig.update_layout(
         template="plotly_white",
@@ -392,7 +450,7 @@ def plot_engine_flow(states, ideal=False, show=True, persist=True):
         },
         margin={"l": 40, "r": 40, "t": 86, "b": 46},
         font={"family": "Arial", "size": 13, "color": "#102A43"},
-        annotations=_annotations(sections, velocities, ideal=ideal),
+        annotations=_annotations(sections, velocities, ideal=ideal) + bypass_annotations,
     )
     fig.update_xaxes(
         title="Engine Axis",

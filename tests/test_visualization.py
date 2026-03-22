@@ -24,6 +24,12 @@ class VisualizationTests(unittest.TestCase):
                 "verbose": False,
             }
         )
+        self.turbofan_result = run_engine_case(
+            {
+                "preset_name": "Low-Bypass Turbofan",
+                "verbose": False,
+            }
+        )
 
     def test_cycle_figures_build_without_persisting(self):
         figures = [
@@ -52,6 +58,7 @@ class VisualizationTests(unittest.TestCase):
         wet_figures = [
             plot_TS(self.afterburner_result, show=False, persist=False),
             plot_engine_flow(self.afterburner_result, show=False, persist=False),
+            plot_engine_flow(self.turbofan_result, show=False, persist=False),
         ]
 
         performance_payload = performance_figure.to_plotly_json()

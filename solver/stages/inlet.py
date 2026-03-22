@@ -25,7 +25,7 @@ class Inlet(Stage):
 
         new_state = state.copy()
         new_state.set_actual_total(Tt2, Pt2, self.exit_velocity)
-        new_state.s += entropy_change(Tt2, state.Tt, Pt2, state.Pt, self.gas.cp, state.R)
+        new_state.s += entropy_change(Tt2, state.Tt, Pt2, state.Pt, self.gas)
 
         new_state.set_ideal_total(Tt2_ideal, Pt2_ideal, self.exit_velocity)
         new_state.s_ideal = state.s_ideal

@@ -15,12 +15,15 @@ from visualization.plots import (
 def main():
     config = get_default_config()
     result = run_engine_case(config)
-    summary = summarize_result(result, V0=config["flight_speed"])
+    summary = summarize_result(result, V0=result.config["flight_speed"])
 
     print("---- ENGINE RESULTS ----")
     print(f"Thrust: {summary['thrust_N']:.2f} N")
     print(f"Specific thrust: {summary['specific_thrust_N_per_kg_s']:.2f} N/(kg/s)")
+    print(f"TSFC: {summary['tsfc_kg_per_N_s']:.6f} kg/(N-s)")
+    print(f"Specific impulse: {summary['specific_impulse_s']:.2f} s")
     print(f"Fuel-air ratio: {summary['fuel_air_ratio']:.5f}")
+    print(f"Fuel flow: {summary['fuel_flow_kg_s']:.4f} kg/s")
     print(f"Overall efficiency: {summary['overall_efficiency']:.4f}")
     print(f"Jet power efficiency: {summary['jet_power_efficiency']:.4f}")
     print(f"BWR: {summary['bwr']:.4f}")
@@ -43,7 +46,14 @@ def main():
     plot_operating_map(envelope_df, metric="thrust_N", show=False, persist=True)
 
     exports = export_result_tables(result, summary, output_dir="outputs")
-    report_path = write_html_report(summary, exports, output_dir="outputs")
+    report_path = write_html_report(
+        summary,
+        exports,
+        output_dir="outputs",
+        config=result.config,
+        assumptions=result.assumptions,
+        equations=result.equations,
+    )
     print(f"Saved report: {report_path.resolve()}")
 
 

@@ -30,7 +30,7 @@ class Combustor(Stage):
 
         new_state = state.copy()
         new_state.set_actual_total(self.T3, Pt3, self.exit_velocity)
-        new_state.s += entropy_change(self.T3, state.Tt, Pt3, state.Pt, self.gas.cp, state.R)
+        new_state.s += entropy_change(self.T3, state.Tt, Pt3, state.Pt, self.gas)
         new_state.Qin += fuel_air_ratio * self.gas.lower_heating_value
         new_state.fuel_air_ratio += fuel_air_ratio
 
@@ -40,8 +40,7 @@ class Combustor(Stage):
             state.Tt_ideal,
             Pt3_ideal,
             state.Pt_ideal,
-            self.gas.cp,
-            state.R,
+            self.gas,
         )
         new_state.Qin_ideal += fuel_air_ratio_ideal * self.gas.lower_heating_value
         new_state.fuel_air_ratio_ideal += fuel_air_ratio_ideal
