@@ -1,7 +1,5 @@
 streamlit
 plotly
 numpy
-scipy
 pandas
-matplotlib
 kaleido

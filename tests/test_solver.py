@@ -1,7 +1,11 @@
 import unittest
+import math
 
 from configs.default import get_default_config
+from models.atmosphere import isa_atmosphere
 from models.gas import STANDARD_AIR, build_gas_from_config
+from performance.efficiency import jet_power_efficiency, overall_efficiency, propulsive_efficiency
+from performance.metrics import summarize_result
 from solver.base import FlowState
 from solver.engine import run_engine_case, sweep_flight_envelope
 from solver.stages.combustor import Combustor
@@ -93,6 +97,8 @@ class SolverPhysicsTests(unittest.TestCase):
         self.assertIn("actual_total_temperature_K", station_frame.columns)
         self.assertIn("ideal_total_pressure_kPa", station_frame.columns)
         self.assertIn("fuel_air_ratio", station_frame.columns)
+        self.assertIn("infeasible", station_frame.columns)
+        self.assertIn("status_message", station_frame.columns)
         self.assertGreater(len(component_frame), 0)
         self.assertIn("actual_total_pressure_ratio", component_frame.columns)
 
@@ -103,6 +109,63 @@ class SolverPhysicsTests(unittest.TestCase):
         self.assertEqual(len(sweep), 9)
         self.assertIn("thrust_N", sweep.columns)
         self.assertIn("overall_efficiency", sweep.columns)
+
+    def test_direct_engine_run_uses_isa_ambient_conditions_for_altitude(self):
+        altitude_m = 5000.0
+        atmosphere = isa_atmosphere(altitude_m)
+
+        result = run_engine_case({"altitude_m": altitude_m, "verbose": False})
+
+        self.assertAlmostEqual(result.states[0].T, atmosphere.temperature, places=6)
+        self.assertAlmostEqual(result.states[0].P, atmosphere.pressure, places=6)
+
+    def test_propulsive_efficiency_is_distinct_from_overall_efficiency(self):
+        config = {**get_default_config(), "verbose": False}
+        result = run_engine_case(config)
+        state = result.final_state
+        V0 = config["flight_speed"]
+
+        eta_propulsive = propulsive_efficiency(state, V0)
+        eta_overall = overall_efficiency(state, V0)
+        eta_jet = jet_power_efficiency(state, V0)
+
+        self.assertAlmostEqual(eta_propulsive * eta_jet, eta_overall, places=6)
+        self.assertNotAlmostEqual(eta_propulsive, eta_overall, places=6)
+
+    def test_invalid_configs_are_rejected_before_solver_execution(self):
+        with self.assertRaises(ValueError):
+            run_engine_case({"compressor_efficiency": 0.0, "verbose": False})
+
+        with self.assertRaises(ValueError):
+            run_engine_case({"mass_flow_rate": -1.0, "verbose": False})
+
+    def test_infeasible_cycle_is_flagged_instead_of_returning_impossible_area(self):
+        result = run_engine_case({"turbine_inlet_temperature": 500.0, "verbose": False})
+        summary = summarize_result(result, V0=200.0)
+
+        self.assertTrue(result.final_state.infeasible)
+        self.assertFalse(summary["feasible"])
+        self.assertTrue(math.isnan(result.final_state.exit_area))
+        self.assertGreater(len(summary["warnings"]), 0)
+
+    def test_afterburner_stage_adds_fuel_and_boosts_thrust(self):
+        base_config = {**get_default_config(), "verbose": False}
+        dry_result = run_engine_case(base_config)
+        wet_result = run_engine_case(
+            {
+                **base_config,
+                "afterburner_enabled": True,
+                "afterburner_exit_temperature": 1900.0,
+            }
+        )
+
+        dry_summary = summarize_result(dry_result, V0=base_config["flight_speed"])
+        wet_summary = summarize_result(wet_result, V0=base_config["flight_speed"])
+        wet_stage_names = [state.stage_name for state in wet_result.states]
+
+        self.assertIn("Afterburner", wet_stage_names)
+        self.assertGreater(wet_result.final_state.fuel_air_ratio, dry_result.final_state.fuel_air_ratio)
+        self.assertGreater(wet_summary["thrust_N"], dry_summary["thrust_N"])
 
 
 if __name__ == "__main__":

@@ -47,4 +47,6 @@ def summarize_result(result, V0):
         "throat_area_m2": final_state.throat_area,
         "pressure_thrust_N": final_state.pressure_thrust,
         "nozzle_choked": final_state.nozzle_choked,
+        "feasible": not final_state.infeasible,
+        "warnings": list(final_state.warnings),
     }

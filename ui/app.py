@@ -2,13 +2,13 @@ import json
 from pathlib import Path
 import sys
 
-import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+if __package__ in {None, ""}:
+    project_root = Path(__file__).resolve().parents[1]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
 
 from configs.default import get_default_config
 from models.atmosphere import isa_atmosphere
@@ -27,39 +27,8 @@ from visualization.plots import (
 )
 
 run_engine_case = engine_module.run_engine_case
+sweep_flight_envelope = engine_module.sweep_flight_envelope
 sweep_compressor_pressure_ratio = engine_module.sweep_compressor_pressure_ratio
-
-
-def _fallback_sweep_flight_envelope(base_config, altitudes_m, flight_speeds_mps):
-    rows = []
-
-    for altitude_m in altitudes_m:
-        atmosphere = isa_atmosphere(float(altitude_m))
-        for flight_speed in flight_speeds_mps:
-            case_config = dict(base_config)
-            case_config["altitude_m"] = float(altitude_m)
-            case_config["ambient_temperature"] = atmosphere.temperature
-            case_config["ambient_pressure"] = atmosphere.pressure
-            case_config["flight_speed"] = float(flight_speed)
-            case_config["verbose"] = False
-            result = run_engine_case(case_config)
-            summary = summarize_result(result, V0=case_config["flight_speed"])
-            rows.append(
-                {
-                    "altitude_m": float(altitude_m),
-                    "flight_speed_mps": float(flight_speed),
-                    "thrust_N": summary["thrust_N"],
-                    "specific_thrust_N_per_kg_s": summary["specific_thrust_N_per_kg_s"],
-                    "overall_efficiency": summary["overall_efficiency"],
-                    "jet_power_efficiency": summary["jet_power_efficiency"],
-                    "nozzle_choked": summary["nozzle_choked"],
-                }
-            )
-
-    return pd.DataFrame(rows)
-
-
-sweep_flight_envelope = getattr(engine_module, "sweep_flight_envelope", _fallback_sweep_flight_envelope)
 
 
 def _build_sidebar_config():
@@ -175,6 +144,44 @@ def _build_sidebar_config():
             step=5.0,
         )
 
+    with st.sidebar.expander("Afterburner", expanded=False):
+        config["afterburner_enabled"] = st.checkbox(
+            "Enable Afterburner",
+            value=bool(defaults["afterburner_enabled"]),
+        )
+        config["afterburner_exit_temperature"] = st.slider(
+            "Afterburner Exit Temperature (K)",
+            1100.0,
+            2400.0,
+            float(defaults["afterburner_exit_temperature"]),
+            step=25.0,
+            disabled=not config["afterburner_enabled"],
+        )
+        config["afterburner_pressure_loss"] = st.slider(
+            "Afterburner Pressure Loss",
+            0.0,
+            0.12,
+            float(defaults["afterburner_pressure_loss"]),
+            step=0.005,
+            disabled=not config["afterburner_enabled"],
+        )
+        config["afterburner_efficiency"] = st.slider(
+            "Afterburner Efficiency",
+            0.90,
+            1.0,
+            float(defaults["afterburner_efficiency"]),
+            step=0.005,
+            disabled=not config["afterburner_enabled"],
+        )
+        config["afterburner_exit_velocity"] = st.slider(
+            "Afterburner Exit Velocity (m/s)",
+            80.0,
+            320.0,
+            float(defaults["afterburner_exit_velocity"]),
+            step=5.0,
+            disabled=not config["afterburner_enabled"],
+        )
+
     with st.sidebar.expander("Gas Model", expanded=False):
         config["gas_cp"] = st.number_input("cp (J/kg-K)", value=float(defaults["gas_cp"]), step=5.0)
         config["gas_gamma"] = st.number_input("gamma", value=float(defaults["gas_gamma"]), step=0.01)
@@ -250,6 +257,8 @@ def _station_column_view(station_df, mode):
                 "actual_entropy_J_per_kgK",
                 "fuel_air_ratio",
                 "nozzle_choked",
+                "infeasible",
+                "status_message",
             ]
         ]
     if mode == "Theoretical Focus":
@@ -267,6 +276,8 @@ def _station_column_view(station_df, mode):
                 "ideal_entropy_J_per_kgK",
                 "fuel_air_ratio",
                 "nozzle_choked",
+                "infeasible",
+                "status_message",
             ]
         ]
     return station_df
@@ -352,7 +363,7 @@ def main():
         </style>
         <div class="hero">
             <h2 style="margin:0;">Jet Engine Brayton Cycle Analysis</h2>
-            <p>Interactive 1D cycle model with explicit static vs total station data, actual vs theoretical plots, and exportable reports.</p>
+            <p>Interactive 1D cycle model with optional afterburning, explicit static vs total station data, and exportable reports.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -363,6 +374,11 @@ def main():
     summary = summarize_result(result, V0=config["flight_speed"])
     station_df = result.to_dataframe()
     component_df = result.to_component_dataframe()
+
+    if not summary["feasible"]:
+        st.error("This operating point is thermodynamically infeasible in the current 1D model.")
+    for warning in summary["warnings"]:
+        st.warning(warning)
 
     figures = {
         "T-s Diagram": plot_TS(result, show=False, persist=False),

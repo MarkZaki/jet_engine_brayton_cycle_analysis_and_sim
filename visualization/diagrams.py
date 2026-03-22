@@ -66,7 +66,7 @@ def _sample_polytropic(start, end):
 
 
 def _sample_process(stage_name, start, end):
-    if stage_name in {"Combustor", CLOSING_STAGE_NAME}:
+    if stage_name in {"Combustor", "Afterburner", CLOSING_STAGE_NAME}:
         return _sample_linear(start, end)
 
     return _sample_polytropic(start, end)
@@ -118,10 +118,25 @@ def TP_diagram(result_or_states):
 
 def performance_diagram(result_or_states):
     states = _coerce_states(result_or_states)
+    stage_names = []
+    actual_net = []
+    ideal_net = []
+    actual_heat = []
+    ideal_heat = []
+
+    for index in range(1, len(states)):
+        inlet = states[index - 1]
+        outlet = states[index]
+        stage_names.append(outlet.stage_name or f"Stage {index}")
+        actual_net.append((outlet.Wt - outlet.Wc) - (inlet.Wt - inlet.Wc))
+        ideal_net.append((outlet.Wt_ideal - outlet.Wc_ideal) - (inlet.Wt_ideal - inlet.Wc_ideal))
+        actual_heat.append(outlet.Qin - inlet.Qin)
+        ideal_heat.append(outlet.Qin_ideal - inlet.Qin_ideal)
+
     return {
-        "stage_names": [state.stage_name or "Freestream" for state in states],
-        "actual_net": [state.Wt - state.Wc for state in states],
-        "ideal_net": [state.Wt_ideal - state.Wc_ideal for state in states],
-        "actual_heat": [state.Qin for state in states],
-        "ideal_heat": [state.Qin_ideal for state in states],
+        "stage_names": stage_names,
+        "actual_net": actual_net,
+        "ideal_net": ideal_net,
+        "actual_heat": actual_heat,
+        "ideal_heat": ideal_heat,
     }

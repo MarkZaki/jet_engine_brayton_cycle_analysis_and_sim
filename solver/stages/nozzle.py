@@ -39,6 +39,8 @@ class Nozzle(Stage):
         new_state.exit_area = exit_actual["exit_area"]
         new_state.throat_area = exit_actual["throat_area"]
         new_state.nozzle_choked = exit_actual["choked"]
+        if not exit_actual["feasible"]:
+            new_state.mark_infeasible(exit_actual["message"])
 
         new_state.set_ideal_static(
             exit_ideal["temperature"],
@@ -57,6 +59,8 @@ class Nozzle(Stage):
         new_state.exit_area_ideal = exit_ideal["exit_area"]
         new_state.throat_area_ideal = exit_ideal["throat_area"]
         new_state.nozzle_choked_ideal = exit_ideal["choked"]
+        if not exit_ideal["feasible"]:
+            new_state.add_warning(f"Ideal nozzle branch: {exit_ideal['message']}")
 
         new_state.update_derived()
         return new_state

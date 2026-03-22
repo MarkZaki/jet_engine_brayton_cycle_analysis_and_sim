@@ -25,9 +25,12 @@ def main():
     print(f"Jet power efficiency: {summary['jet_power_efficiency']:.4f}")
     print(f"BWR: {summary['bwr']:.4f}")
     print(f"Nozzle choked: {summary['nozzle_choked']}")
+    print(f"Feasible operating point: {summary['feasible']}")
     print(f"Exit Mach: {summary['exit_mach']:.3f}")
     print(f"Exit area: {summary['exit_area_m2']:.4f} m^2")
     print(f"Throat area: {summary['throat_area_m2']:.4f} m^2")
+    for warning in summary["warnings"]:
+        print(f"Warning: {warning}")
 
     plot_PV(result, show=False, persist=True)
     plot_TS(result, show=False, persist=True)

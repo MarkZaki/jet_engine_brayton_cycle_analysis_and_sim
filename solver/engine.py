@@ -8,6 +8,7 @@ from models.gas import build_gas_from_config
 from performance.metrics import summarize_result
 from solver.base import EngineRunResult, FlowState
 from solver.helpers import kelvinToCelsius
+from solver.stages.afterburner import Afterburner
 from solver.stages.combustor import Combustor
 from solver.stages.compressor import Compressor
 from solver.stages.inlet import Inlet
@@ -42,50 +43,133 @@ class Engine:
         return EngineRunResult(states=states, gas=initial_state.gas, config=config or {})
 
 
+def _resolve_ambient_conditions(config):
+    resolved = deepcopy(config)
+    atmosphere = isa_atmosphere(resolved.get("altitude_m", 0.0))
+    if resolved.get("ambient_temperature") is None:
+        resolved["ambient_temperature"] = atmosphere.temperature
+    if resolved.get("ambient_pressure") is None:
+        resolved["ambient_pressure"] = atmosphere.pressure
+    return resolved
+
+
+def _validate_closed_interval(name, value, lower, upper):
+    if not (lower <= value <= upper):
+        raise ValueError(f"{name} must be between {lower} and {upper}.")
+
+def validate_config(config):
+    if config["altitude_m"] < 0.0:
+        raise ValueError("altitude_m must be non-negative.")
+    if config["flight_speed"] < 0.0:
+        raise ValueError("flight_speed must be non-negative.")
+    if config["mass_flow_rate"] <= 0.0:
+        raise ValueError("mass_flow_rate must be greater than zero.")
+    if config["gas_cp"] <= 0.0:
+        raise ValueError("gas_cp must be greater than zero.")
+    if config["gas_gamma"] <= 1.0:
+        raise ValueError("gas_gamma must be greater than 1.")
+    if config["fuel_lower_heating_value"] <= 0.0:
+        raise ValueError("fuel_lower_heating_value must be greater than zero.")
+    if config["ambient_temperature"] <= 0.0:
+        raise ValueError("ambient_temperature must be greater than zero.")
+    if config["ambient_pressure"] <= 0.0:
+        raise ValueError("ambient_pressure must be greater than zero.")
+    if config["turbine_inlet_temperature"] <= 0.0:
+        raise ValueError("turbine_inlet_temperature must be greater than zero.")
+    if config["afterburner_exit_temperature"] <= 0.0:
+        raise ValueError("afterburner_exit_temperature must be greater than zero.")
+
+    _validate_closed_interval("pressure_recovery", config["pressure_recovery"], 0.0, 1.0)
+    for key in (
+        "compressor_efficiency",
+        "combustor_efficiency",
+        "turbine_efficiency",
+        "mechanical_efficiency",
+        "afterburner_efficiency",
+        "nozzle_efficiency",
+    ):
+        if not (0.0 < config[key] <= 1.0):
+            raise ValueError(f"{key} must be greater than 0 and at most 1.")
+
+    if not (0.0 <= config["combustor_pressure_loss"] < 1.0):
+        raise ValueError("combustor_pressure_loss must be between 0 and 1.")
+    if not (0.0 <= config["afterburner_pressure_loss"] < 1.0):
+        raise ValueError("afterburner_pressure_loss must be between 0 and 1.")
+    if config["compressor_pressure_ratio"] < 1.0:
+        raise ValueError("compressor_pressure_ratio must be at least 1.")
+
+    for key in (
+        "diffuser_exit_velocity",
+        "compressor_exit_velocity",
+        "combustor_exit_velocity",
+        "turbine_exit_velocity",
+        "afterburner_exit_velocity",
+    ):
+        if config[key] < 0.0:
+            raise ValueError(f"{key} must be non-negative.")
+
+
+def prepare_config(config=None):
+    merged = get_default_config()
+    if config:
+        merged.update(config)
+    resolved = _resolve_ambient_conditions(merged)
+    validate_config(resolved)
+    return resolved
+
+
 def build_engine(config, gas):
-    return Engine(
-        [
-            Inlet(
-                pressure_recovery=config["pressure_recovery"],
-                exit_velocity=config["diffuser_exit_velocity"],
+    stages = [
+        Inlet(
+            pressure_recovery=config["pressure_recovery"],
+            exit_velocity=config["diffuser_exit_velocity"],
+            gas=gas,
+        ),
+        Compressor(
+            pressure_ratio=config["compressor_pressure_ratio"],
+            eta_c=config["compressor_efficiency"],
+            exit_velocity=config["compressor_exit_velocity"],
+            gas=gas,
+        ),
+        Combustor(
+            T3=config["turbine_inlet_temperature"],
+            pressure_loss=config["combustor_pressure_loss"],
+            exit_velocity=config["combustor_exit_velocity"],
+            gas=gas,
+            burner_efficiency=config["combustor_efficiency"],
+        ),
+        Turbine(
+            eta_t=config["turbine_efficiency"],
+            eta_mech=config["mechanical_efficiency"],
+            exit_velocity=config["turbine_exit_velocity"],
+            gas=gas,
+        ),
+    ]
+    if config.get("afterburner_enabled", False):
+        stages.append(
+            Afterburner(
+                Tt_out=config["afterburner_exit_temperature"],
+                pressure_loss=config["afterburner_pressure_loss"],
+                exit_velocity=config["afterburner_exit_velocity"],
                 gas=gas,
-            ),
-            Compressor(
-                pressure_ratio=config["compressor_pressure_ratio"],
-                eta_c=config["compressor_efficiency"],
-                exit_velocity=config["compressor_exit_velocity"],
-                gas=gas,
-            ),
-            Combustor(
-                T3=config["turbine_inlet_temperature"],
-                pressure_loss=config["combustor_pressure_loss"],
-                exit_velocity=config["combustor_exit_velocity"],
-                gas=gas,
-                burner_efficiency=config["combustor_efficiency"],
-            ),
-            Turbine(
-                eta_t=config["turbine_efficiency"],
-                eta_mech=config["mechanical_efficiency"],
-                exit_velocity=config["turbine_exit_velocity"],
-                gas=gas,
-            ),
-            Nozzle(
-                gas=gas,
-                Pe=config["ambient_pressure"],
-                eta_n=config["nozzle_efficiency"],
-            ),
-        ]
+                burner_efficiency=config["afterburner_efficiency"],
+            )
+        )
+
+    stages.append(
+        Nozzle(
+            gas=gas,
+            Pe=config["ambient_pressure"],
+            eta_n=config["nozzle_efficiency"],
+        )
     )
+    return Engine(stages)
 
 
 def build_initial_state(config, gas):
-    atmosphere = isa_atmosphere(config.get("altitude_m", 0.0))
-    ambient_temperature = config.get("ambient_temperature", atmosphere.temperature)
-    ambient_pressure = config.get("ambient_pressure", atmosphere.pressure)
-
     state0 = FlowState(
-        T=ambient_temperature,
-        P=ambient_pressure,
+        T=config["ambient_temperature"],
+        P=config["ambient_pressure"],
         V=config["flight_speed"],
         m_dot=config["mass_flow_rate"],
         gas=gas,
@@ -95,14 +179,10 @@ def build_initial_state(config, gas):
 
 
 def run_engine_case(config=None):
-    merged = get_default_config()
-    if config:
-        merged.update(config)
-
-    gas = build_gas_from_config(merged)
-    engine = build_engine(merged, gas)
-    initial_state = build_initial_state(merged, gas)
-    runtime_config = deepcopy(merged)
+    runtime_config = prepare_config(config)
+    gas = build_gas_from_config(runtime_config)
+    engine = build_engine(runtime_config, gas)
+    initial_state = build_initial_state(runtime_config, gas)
     return engine.run(initial_state, verbose=runtime_config.get("verbose", False), config=runtime_config)
 
 

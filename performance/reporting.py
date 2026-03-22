@@ -4,9 +4,15 @@ from pathlib import Path
 import pandas as pd
 
 
+def _display_value(value):
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=True)
+    return value
+
+
 def _summary_frame(summary):
     return pd.DataFrame(
-        [{"metric": key, "value": value} for key, value in summary.items()]
+        [{"metric": key, "value": _display_value(value)} for key, value in summary.items()]
     )
 
 
@@ -34,7 +40,7 @@ def export_result_tables(result, summary, output_dir="outputs"):
 
 def build_html_report(summary, table_exports):
     metric_rows = "\n".join(
-        f"<tr><td>{key}</td><td>{value}</td></tr>" for key, value in summary.items()
+        f"<tr><td>{key}</td><td>{_display_value(value)}</td></tr>" for key, value in summary.items()
     )
     export_rows = "\n".join(
         f"<li><a href=\"{path.name}\">{label}</a></li>" for label, path in table_exports.items()

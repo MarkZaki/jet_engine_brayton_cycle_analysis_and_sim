@@ -16,6 +16,14 @@ from visualization.plots import (
 class VisualizationTests(unittest.TestCase):
     def setUp(self):
         self.result = run_engine_case({**get_default_config(), "verbose": False})
+        self.afterburner_result = run_engine_case(
+            {
+                **get_default_config(),
+                "afterburner_enabled": True,
+                "afterburner_exit_temperature": 1900.0,
+                "verbose": False,
+            }
+        )
 
     def test_cycle_figures_build_without_persisting(self):
         figures = [
@@ -38,6 +46,18 @@ class VisualizationTests(unittest.TestCase):
 
         self.assertGreater(len(figure.to_plotly_json()["data"]), 0)
         self.assertIn(b"plotly", html_bytes.lower())
+
+    def test_performance_plot_uses_stage_deltas_and_afterburner_renders(self):
+        performance_figure = plot_performance(self.result, show=False, persist=False)
+        wet_figures = [
+            plot_TS(self.afterburner_result, show=False, persist=False),
+            plot_engine_flow(self.afterburner_result, show=False, persist=False),
+        ]
+
+        performance_payload = performance_figure.to_plotly_json()
+        self.assertEqual(len(performance_payload["data"][0]["x"]), len(self.result.states) - 1)
+        for fig in wet_figures:
+            self.assertGreater(len(fig.to_plotly_json()["data"]), 0)
 
 
 if __name__ == "__main__":

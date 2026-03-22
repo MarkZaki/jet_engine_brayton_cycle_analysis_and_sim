@@ -5,7 +5,7 @@ Student-focused Brayton-cycle jet engine simulator with:
 - a reusable gas model
 - explicit static and total station tracking
 - actual vs theoretical cycle tracking
-- inlet, compressor, combustor, turbine, and nozzle stages
+- inlet, compressor, combustor, turbine, optional afterburner, and nozzle stages
 - nozzle choking logic
 - Plotly cycle plots, engine schematic, and operating-map exports
 - a Streamlit interface for interactive exploration
@@ -71,7 +71,9 @@ project_root/
 - explicit static vs total station properties and component delta tables
 - combustor fuel-air ratio calculation from target turbine inlet temperature
 - turbine work balance linked to compressor demand and fuel addition
+- optional afterburner reheat stage with extra fuel addition and pressure loss
 - nozzle choking detection with pressure-thrust and throat-area estimates
+- config validation and infeasible operating-point warnings
 - actual and theoretical `P-v`, `T-s`, `T-P`, and work plots
 - geometry-linked engine thermal-flow schematic with Plotly
 - Streamlit dashboard with controls, metrics, plots, station tables, component deltas, export tools, a pressure-ratio sweep, and a flight-envelope operating map
@@ -82,7 +84,7 @@ project_root/
 ### Streamlit UI
 
 ```bash
-streamlit run ui/app.py
+streamlit run streamlit_app.py
 ```
 
 ### Script Mode
@@ -105,6 +107,7 @@ python -m unittest discover -s tests -v
 ## Notes
 
 - The solver is a 1D thermodynamic model, not CFD.
+- Invalid configs are rejected before solving, and weak-cycle cases are flagged as infeasible instead of being hidden behind impossible geometry.
 - The thermal-flow schematic is an engineering visualization built from station data and interpolation.
 - Component geometry in the schematic is scaled from solved station areas, not arbitrary fixed heights.
 - The ideal cycle is closed in the diagram layer for textbook comparison, while the actual engine path remains open.

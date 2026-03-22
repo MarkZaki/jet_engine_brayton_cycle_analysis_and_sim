@@ -11,6 +11,7 @@ SECTION_LAYOUT = {
     "Compressor": {"length": 1.45, "kind": "compressor"},
     "Combustor": {"length": 1.35, "kind": "combustor"},
     "Turbine": {"length": 1.25, "kind": "turbine"},
+    "Afterburner": {"length": 1.20, "kind": "afterburner"},
     "Nozzle": {"length": 1.55, "kind": "nozzle"},
 }
 DEFAULT_SECTION = {"length": 1.20, "kind": "duct"}
@@ -26,6 +27,13 @@ GRID_Y = 180
 FIELD_X = 24
 FIELD_Y = 9
 OUTPUT_DIR = Path("outputs")
+
+
+def _finite_positive(*values):
+    finite_values = [value for value in values if isinstance(value, (int, float)) and math.isfinite(value) and value > 0.0]
+    return max(finite_values) if finite_values else 1e-6
+
+
 def _state_value(state, field, ideal=False):
     if ideal:
         return getattr(state, f"{field}_ideal")
@@ -41,8 +49,8 @@ def _station_payload(state, ideal=False):
         "Pt": _state_value(state, "Pt", ideal),
         "V": _state_value(state, "V", ideal),
         "M": _state_value(state, "M", ideal),
-        "area": max(_state_value(state, "area", ideal), _state_value(state, "exit_area", ideal), 1e-6),
-        "m_dot": state.m_dot,
+        "area": _finite_positive(_state_value(state, "area", ideal), _state_value(state, "exit_area", ideal)),
+        "m_dot": state.m_dot_ideal if ideal else state.m_dot_actual,
         "R": state.R,
     }
 
@@ -265,7 +273,7 @@ def _pattern_traces(sections):
                         showlegend=False,
                     )
                 )
-        elif section["kind"] == "combustor":
+        elif section["kind"] in {"combustor", "afterburner"}:
             flame_x = np.linspace(x0 + 0.22, x1 - 0.22, 8)
             flame_y = 0.18 * local_height * np.sin(np.linspace(0.0, 2.8 * math.pi, len(flame_x)))
             traces.append(

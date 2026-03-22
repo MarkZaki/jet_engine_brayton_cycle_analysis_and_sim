@@ -43,6 +43,8 @@ class StationRecord:
     turbine_work_J_per_kg_air: float
     pressure_thrust_N: float
     nozzle_choked: bool
+    infeasible: bool
+    status_message: str
 
 
 class FlowState:
@@ -82,6 +84,8 @@ class FlowState:
         self.exit_area = 0.0
         self.throat_area = 0.0
         self.nozzle_choked = False
+        self.infeasible = False
+        self.warnings = []
 
         self.T_ideal = T
         self.P_ideal = P
@@ -130,6 +134,8 @@ class FlowState:
         new.exit_area = self.exit_area
         new.throat_area = self.throat_area
         new.nozzle_choked = self.nozzle_choked
+        new.infeasible = self.infeasible
+        new.warnings = list(self.warnings)
 
         new.T_ideal = self.T_ideal
         new.P_ideal = self.P_ideal
@@ -153,6 +159,10 @@ class FlowState:
         new.stage_name = self.stage_name
         new.stage_index = self.stage_index
         return new
+
+    @property
+    def status_message(self):
+        return " | ".join(self.warnings)
 
     @property
     def m_dot_actual(self):
@@ -187,6 +197,14 @@ class FlowState:
         self.V_ideal = velocity
         self.Tt_ideal = temperature_total
         self.Pt_ideal = pressure_total
+
+    def add_warning(self, message):
+        if message and message not in self.warnings:
+            self.warnings.append(message)
+
+    def mark_infeasible(self, message):
+        self.infeasible = True
+        self.add_warning(message)
 
     def update_derived(self):
         self.v = specific_volume(self.T, self.P, self.R)
@@ -235,6 +253,8 @@ class FlowState:
             turbine_work_J_per_kg_air=self.Wt,
             pressure_thrust_N=self.pressure_thrust,
             nozzle_choked=self.nozzle_choked,
+            infeasible=self.infeasible,
+            status_message=self.status_message,
         )
 
 
@@ -256,6 +276,14 @@ class EngineRunResult:
     @property
     def final_state(self):
         return self.states[-1]
+
+    @property
+    def feasible(self):
+        return not self.final_state.infeasible
+
+    @property
+    def warnings(self):
+        return list(self.final_state.warnings)
 
     @property
     def station_records(self):

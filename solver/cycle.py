@@ -4,6 +4,8 @@ import math
 
 from models.gas import STANDARD_AIR
 
+MIN_POSITIVE = 1e-9
+
 
 def specific_volume(T, P, gas_constant=STANDARD_AIR.R):
     return gas_constant * T / P
@@ -14,11 +16,11 @@ def density(T, P, gas_constant=STANDARD_AIR.R):
 
 
 def speed_of_sound(T, gamma_value=STANDARD_AIR.gamma, gas_constant=STANDARD_AIR.R):
-    return math.sqrt(max(1e-12, gamma_value * gas_constant * T))
+    return math.sqrt(max(MIN_POSITIVE, gamma_value * gas_constant * T))
 
 
 def mach_number(velocity, T, gamma_value=STANDARD_AIR.gamma, gas_constant=STANDARD_AIR.R):
-    return velocity / max(speed_of_sound(T, gamma_value, gas_constant), 1e-12)
+    return velocity / max(speed_of_sound(T, gamma_value, gas_constant), MIN_POSITIVE)
 
 
 def total_temperature(T, velocity, cp=STANDARD_AIR.cp):
@@ -26,7 +28,7 @@ def total_temperature(T, velocity, cp=STANDARD_AIR.cp):
 
 
 def static_temperature_from_total(T_total, velocity, cp=STANDARD_AIR.cp):
-    return max(1e-9, T_total - velocity**2 / (2.0 * cp))
+    return max(MIN_POSITIVE, T_total - velocity**2 / (2.0 * cp))
 
 
 def stagnation_pressure_from_static(T_static, P_static, T_total, gamma_value=STANDARD_AIR.gamma):
@@ -85,11 +87,20 @@ def critical_pressure_ratio(gamma_value=STANDARD_AIR.gamma):
 
 
 def choked_area_from_total_state(T_total, P_total, gas, m_dot):
+    if m_dot <= 0.0 or T_total <= 0.0 or P_total <= 0.0:
+        return {
+            "temperature": math.nan,
+            "pressure": math.nan,
+            "density": math.nan,
+            "velocity": math.nan,
+            "area": math.nan,
+        }
+
     T_star = T_total * 2.0 / (gas.gamma + 1.0)
     P_star = P_total * critical_pressure_ratio(gas.gamma)
     rho_star = density(T_star, P_star, gas.R)
     velocity_star = speed_of_sound(T_star, gas.gamma, gas.R)
-    throat_area = m_dot / max(rho_star * velocity_star, 1e-9)
+    throat_area = flow_area(m_dot, rho_star, velocity_star)
     return {
         "temperature": T_star,
         "pressure": P_star,
@@ -100,10 +111,27 @@ def choked_area_from_total_state(T_total, P_total, gas, m_dot):
 
 
 def flow_area(m_dot, rho, velocity):
-    return m_dot / max(rho * max(velocity, 1e-9), 1e-9)
+    if m_dot <= 0.0 or rho <= 0.0 or velocity <= MIN_POSITIVE:
+        return math.nan
+    return m_dot / (rho * velocity)
 
 
 def nozzle_exit_state(T_total, P_total, ambient_pressure, gas, eta_n, m_dot):
+    if T_total <= 0.0 or P_total <= 0.0 or ambient_pressure <= 0.0 or m_dot <= 0.0:
+        return {
+            "temperature": math.nan,
+            "pressure": math.nan,
+            "velocity": 0.0,
+            "density": math.nan,
+            "mach": math.nan,
+            "exit_area": math.nan,
+            "throat_area": math.nan,
+            "pressure_thrust": 0.0,
+            "choked": False,
+            "feasible": False,
+            "message": "Nozzle inlet conditions were invalid for a physical solution.",
+        }
+
     critical_ratio = critical_pressure_ratio(gas.gamma)
     critical_pressure = P_total * critical_ratio
     choked = ambient_pressure <= critical_pressure
@@ -111,11 +139,28 @@ def nozzle_exit_state(T_total, P_total, ambient_pressure, gas, eta_n, m_dot):
 
     exit_temperature_isentropic = isentropic_temperature(T_total, exit_pressure, P_total, gas.gamma)
     exit_temperature = T_total - eta_n * (T_total - exit_temperature_isentropic)
-    exit_velocity = math.sqrt(max(0.0, 2.0 * gas.cp * (T_total - exit_temperature)))
+    enthalpy_drop = gas.cp * max(0.0, T_total - exit_temperature)
+    exit_velocity = math.sqrt(max(0.0, 2.0 * enthalpy_drop))
     rho_exit = density(exit_temperature, exit_pressure, gas.R)
     exit_area = flow_area(m_dot, rho_exit, exit_velocity)
     throat = choked_area_from_total_state(T_total, P_total, gas, m_dot)
-    pressure_thrust = (exit_pressure - ambient_pressure) * exit_area
+    feasible = math.isfinite(exit_area)
+    pressure_thrust = (exit_pressure - ambient_pressure) * exit_area if feasible else 0.0
+
+    if not feasible:
+        return {
+            "temperature": exit_temperature,
+            "pressure": exit_pressure,
+            "velocity": exit_velocity,
+            "density": rho_exit,
+            "mach": mach_number(exit_velocity, exit_temperature, gas.gamma, gas.R) if exit_temperature > 0.0 else math.nan,
+            "exit_area": math.nan,
+            "throat_area": throat["area"],
+            "pressure_thrust": 0.0,
+            "choked": choked,
+            "feasible": False,
+            "message": "The nozzle could not produce a physical exit area for the requested mass flow. The cycle is thermodynamically infeasible at this operating point.",
+        }
 
     return {
         "temperature": exit_temperature,
@@ -127,4 +172,6 @@ def nozzle_exit_state(T_total, P_total, ambient_pressure, gas, eta_n, m_dot):
         "throat_area": throat["area"],
         "pressure_thrust": pressure_thrust,
         "choked": choked,
+        "feasible": True,
+        "message": "",
     }

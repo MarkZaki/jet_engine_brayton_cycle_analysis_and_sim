@@ -281,7 +281,7 @@ def plot_performance(states, show=True, persist=True):
         )
     )
 
-    _apply_layout(fig, "Net Specific Work by Stage", "Stage", "Specific Work (J/kg)")
+    _apply_layout(fig, "Stage Delta Specific Work", "Stage", "Specific Work (J/kg)")
     fig.update_layout(barmode="group")
     return _finalize_figure(fig, "performance.html", show, persist)
 
